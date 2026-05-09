@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireAdmin, requireUser } from "@/lib/auth";
+import { sendTopicAnnouncement } from "@/lib/email";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { Choice } from "@/lib/types";
 
@@ -13,6 +14,7 @@ export async function createTopic(formData: FormData) {
   const description = String(formData.get("description") ?? "").trim() || null;
   const closesRaw = String(formData.get("closes_at") ?? "").trim();
   const closes_at = closesRaw ? new Date(closesRaw).toISOString() : null;
+  const notify = formData.get("notify") === "on";
   if (!title) throw new Error("Title is required");
 
   const supabase = createAdminClient();
@@ -22,6 +24,26 @@ export async function createTopic(formData: FormData) {
     .select("id")
     .single();
   if (error) throw new Error(error.message);
+
+  if (notify) {
+    const { data: members } = await supabase
+      .from("profiles")
+      .select("email");
+    const recipients = (members ?? []).map((m) => m.email).filter(Boolean);
+    if (recipients.length) {
+      try {
+        await sendTopicAnnouncement({
+          to: recipients,
+          topicId: data!.id,
+          title,
+          description,
+          closesAt: closes_at,
+        });
+      } catch (e) {
+        console.error("sendTopicAnnouncement failed", e);
+      }
+    }
+  }
 
   revalidatePath("/topics");
   redirect(`/topics/${data!.id}`);
