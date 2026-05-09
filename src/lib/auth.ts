@@ -6,7 +6,9 @@ import type { Profile } from "@/lib/types";
 
 const AUTH_COOKIE = "hoa_auth";
 const USER_COOKIE = "hoa_user";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+// 1 year. Middleware refreshes the expiry on every authenticated request, so
+// active users effectively never need to re-enter the password.
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 function appPassword(): string {
   const pw = process.env.APP_PASSWORD;

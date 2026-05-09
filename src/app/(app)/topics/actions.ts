@@ -29,7 +29,9 @@ export async function createTopic(formData: FormData) {
     const { data: members } = await supabase
       .from("profiles")
       .select("email");
-    const recipients = (members ?? []).map((m) => m.email).filter(Boolean);
+    const recipients = (members ?? [])
+      .map((m) => m.email)
+      .filter((e): e is string => !!e);
     if (recipients.length) {
       try {
         await sendTopicAnnouncement({
