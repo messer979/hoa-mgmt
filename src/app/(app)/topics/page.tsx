@@ -1,18 +1,14 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export default async function TopicsPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user!.id)
-    .maybeSingle();
-  const isAdmin = profile?.role === "admin";
+  const me = await requireUser();
+  const isAdmin = me.role === "admin";
 
+  const supabase = createAdminClient();
   const { data: topics } = await supabase
     .from("topics")
     .select("id,title,description,status,closes_at,created_at")

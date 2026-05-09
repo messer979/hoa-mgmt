@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/server";
 import { castVote, adminProxyVote, setTopicStatus } from "../actions";
 import type { Choice } from "@/lib/types";
 
@@ -12,9 +13,10 @@ export default async function TopicDetail({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const me = await requireUser();
+  const isAdmin = me.role === "admin";
 
+  const supabase = createAdminClient();
   const { data: topic } = await supabase
     .from("topics")
     .select("*")
@@ -22,28 +24,21 @@ export default async function TopicDetail({
     .maybeSingle();
   if (!topic) notFound();
 
-  const { data: me } = await supabase
-    .from("profiles")
-    .select("role,full_name,email")
-    .eq("id", user!.id)
-    .maybeSingle();
-  const isAdmin = me?.role === "admin";
+  const [{ data: profiles }, { data: votes }] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id,full_name,email,unit_number,role")
+      .order("full_name", { ascending: true }),
+    supabase
+      .from("votes")
+      .select("id,topic_id,voter_id,choice,source,voted_by,email_id,notes,created_at")
+      .eq("topic_id", id),
+  ]);
 
-  const { data: profiles } = await supabase
-    .from("profiles")
-    .select("id,full_name,email,unit_number")
-    .order("full_name", { ascending: true });
-
-  const { data: votes } = await supabase
-    .from("votes")
-    .select("id,topic_id,voter_id,choice,source,voted_by,email_id,notes,created_at")
-    .eq("topic_id", id);
-
-  const myVote = votes?.find((v) => v.voter_id === user!.id);
+  const myVote = votes?.find((v) => v.voter_id === me.id);
   const tally = { affirm: 0, reject: 0, abstain: 0 } as Record<Choice, number>;
   for (const v of votes ?? []) tally[v.choice as Choice]++;
 
-  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
   const totalMembers = (profiles ?? []).length;
   const voted = (votes ?? []).length;
 

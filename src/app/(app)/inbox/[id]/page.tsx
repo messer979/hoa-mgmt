@@ -1,6 +1,7 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { requireAdmin } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/server";
 import { adminProxyVote } from "../../topics/actions";
 import {
   linkEmailToTopic,
@@ -14,7 +15,6 @@ export const dynamic = "force-dynamic";
 function guessChoice(text: string | null): Choice | null {
   if (!text) return null;
   const t = text.toLowerCase();
-  // Strip quoted reply lines.
   const body = t.split(/\n\s*on .* wrote:|\n\s*-----original message-----/i)[0];
   if (/\b(yes|aye|approve|approved|affirm|in favor|for it|i agree)\b/.test(body)) return "affirm";
   if (/\b(no|nay|reject|rejected|deny|denied|against|opposed|disagree)\b/.test(body)) return "reject";
@@ -27,13 +27,10 @@ export default async function EmailDetail({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireAdmin();
   const { id } = await params;
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: me } = await supabase
-    .from("profiles").select("role").eq("id", user!.id).maybeSingle();
-  if (me?.role !== "admin") redirect("/topics");
 
+  const supabase = createAdminClient();
   const { data: email } = await supabase
     .from("emails").select("*").eq("id", id).maybeSingle();
   if (!email) notFound();

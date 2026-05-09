@@ -1,23 +1,10 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentProfile } from "@/lib/auth";
 
 export async function Nav() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  let role: "admin" | "member" = "member";
-  let name = user?.email ?? "";
-  if (user) {
-    const { data } = await supabase
-      .from("profiles")
-      .select("role,full_name,email")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (data) {
-      role = (data.role as "admin" | "member") ?? "member";
-      name = data.full_name ?? data.email ?? name;
-    }
-  }
-  const isAdmin = role === "admin";
+  const me = await getCurrentProfile();
+  const isAdmin = me?.role === "admin";
+  const name = me?.full_name ?? me?.email ?? "";
 
   return (
     <header className="border-b border-border">
@@ -26,6 +13,7 @@ export async function Nav() {
         <nav className="flex items-center gap-3 text-sm">
           <Link href="/topics" className="hover:underline">Topics</Link>
           {isAdmin && <Link href="/inbox" className="hover:underline">Inbox</Link>}
+          {isAdmin && <Link href="/members" className="hover:underline">Members</Link>}
         </nav>
         <div className="ml-auto flex items-center gap-3 text-sm">
           <span className="text-muted">{name}{isAdmin ? " · admin" : ""}</span>

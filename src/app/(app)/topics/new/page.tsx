@@ -1,17 +1,8 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { requireAdmin } from "@/lib/auth";
 import { createTopic } from "../actions";
 
 export default async function NewTopicPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: me } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user!.id)
-    .maybeSingle();
-  if (me?.role !== "admin") redirect("/topics");
-
+  await requireAdmin();
   return (
     <div className="max-w-xl space-y-4">
       <h1 className="text-xl font-semibold">New topic</h1>

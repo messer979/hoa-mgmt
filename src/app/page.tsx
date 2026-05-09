@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentProfile, isAuthed } from "@/lib/auth";
 
 export default async function Home() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  redirect(user ? "/topics" : "/login");
+  if (!(await isAuthed())) redirect("/login");
+  const me = await getCurrentProfile();
+  redirect(me ? "/topics" : "/whoami");
 }

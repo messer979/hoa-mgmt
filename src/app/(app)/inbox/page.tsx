@@ -1,6 +1,6 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { requireAdmin } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -9,13 +9,10 @@ export default async function InboxPage({
 }: {
   searchParams: Promise<{ filter?: string }>;
 }) {
+  await requireAdmin();
   const { filter = "unprocessed" } = await searchParams;
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: me } = await supabase
-    .from("profiles").select("role").eq("id", user!.id).maybeSingle();
-  if (me?.role !== "admin") redirect("/topics");
 
+  const supabase = createAdminClient();
   let q = supabase
     .from("emails")
     .select("id,from_email,from_name,subject,received_at,processed,topic_id,matched_profile_id")
