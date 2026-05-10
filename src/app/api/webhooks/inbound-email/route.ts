@@ -583,8 +583,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Spread historical timestamps just before the received_at so chrono
-      // ordering is correct in the conversation view.
+      // Always use synthetic timestamps for ordering — parser order is
+      // reliable (deeper quote = older), and mixing parsed dates with
+      // synthetic ones produced inconsistent ordering when only some
+      // attributions had parseable dates. The original parsed date (if any)
+      // goes into original_date for display.
       const baseMs = new Date(receivedAt).getTime();
       const rows = history.map((h, i) => ({
         topic_id: topicId,
@@ -597,10 +600,10 @@ export async function POST(req: NextRequest) {
         source: "email" as const,
         email_id: null,
         extracted: true,
-        // Use parsed date if present, otherwise nudge each older message back
-        // by 1 second so they sort oldest→newest before the new one.
-        created_at:
-          h.date ?? new Date(baseMs - (history.length - i) * 1000).toISOString(),
+        original_date: h.date,
+        // Spread oldest→newest in the seconds just before received_at so
+        // they sort correctly relative to each other and the new message.
+        created_at: new Date(baseMs - (history.length - i) * 1000).toISOString(),
       }));
       const { error: histErr } = await supabase.from("topic_messages").insert(rows);
       if (histErr) console.error("inbound-email: history backfill failed", histErr);

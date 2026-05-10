@@ -129,8 +129,9 @@ export async function reparseEmailHistory(formData: FormData) {
       source: "email" as const,
       email_id: null,
       extracted: true,
-      created_at:
-        h.date ?? new Date(baseMs - (history.length - i) * 1000).toISOString(),
+      original_date: h.date,
+      // Synthetic timestamps in parser order; see webhook for rationale.
+      created_at: new Date(baseMs - (history.length - i) * 1000).toISOString(),
     }));
     const { error: hErr } = await supabase.from("topic_messages").insert(rows);
     if (hErr) throw new Error(hErr.message);

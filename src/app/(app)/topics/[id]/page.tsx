@@ -51,7 +51,7 @@ export default async function TopicDetail({
     supabase
       .from("topic_messages")
       .select(
-        "id,topic_id,author_profile_id,author_email,author_name,body_text,body_html,source,email_id,extracted,created_at",
+        "id,topic_id,author_profile_id,author_email,author_name,body_text,body_html,source,email_id,extracted,original_date,created_at",
       )
       .eq("topic_id", id)
       .order("created_at", { ascending: true }),
@@ -190,7 +190,14 @@ export default async function TopicDetail({
                   <div className="flex items-center gap-2 text-xs text-muted">
                     <span className="font-medium text-fg">{authorLabel(m)}</span>
                     <span>·</span>
-                    <span>{new Date(m.created_at).toLocaleString()}</span>
+                    <span>
+                      {new Date(
+                        m.extracted && m.original_date
+                          ? m.original_date
+                          : m.created_at,
+                      ).toLocaleString()}
+                      {m.extracted && !m.original_date && " (date not parsed)"}
+                    </span>
                     <span className="badge">{m.source}</span>
                     {m.extracted && (
                       <span className="badge text-amber-700 border-amber-600">

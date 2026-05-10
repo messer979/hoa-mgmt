@@ -63,6 +63,7 @@ export type TopicMessage = {
   source: "email" | "web";
   email_id: string | null;
   extracted: boolean;
+  original_date: string | null;
   created_at: string;
 };
 
