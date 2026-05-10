@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { Webhook } from "svix";
 import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase/server";
-import { parseQuotedHistory, stripQuotedReply } from "@/lib/text";
+import { htmlToText, parseQuotedHistory, stripQuotedReply } from "@/lib/text";
 
 export const runtime = "nodejs";
 
@@ -240,6 +240,13 @@ export async function POST(req: NextRequest) {
     } else {
       console.warn("inbound-email: body fetch returned nothing", { resendEmailId });
     }
+  }
+
+  // Derive plain-text from HTML when the email arrived HTML-only (Gmail's
+  // default) so parseQuotedHistory + the conversation row have content.
+  if (!text && html) {
+    text = htmlToText(html);
+    console.log("inbound-email: derived text from html", { textLen: text.length });
   }
 
   // Heuristic: process anything that looks like a parsed message. Otherwise

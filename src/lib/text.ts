@@ -1,3 +1,27 @@
+// Cheap HTML→text fallback for emails that arrive HTML-only (e.g. Gmail's
+// default). Not a full HTML renderer — just enough to keep the conversation
+// readable. Strips scripts/styles, converts block tags + <br> to newlines,
+// and decodes a handful of common entities.
+export function htmlToText(html: string | null | undefined): string {
+  if (!html) return "";
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<\/(p|div|h[1-6]|li|tr|td|th|blockquote)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export type QuotedSegment = {
   author_name: string | null;
   author_email: string | null;
