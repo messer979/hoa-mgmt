@@ -11,14 +11,17 @@ Supabase Postgres table that powers the Inbox UI.
 
 ## Auth model
 
-There is no per-user account. Auth is a single shared **`APP_PASSWORD`** in
-`.env`. Sign-in is two steps:
+Per-user **email magic-link** sign-in:
 
-1. **Enter password** (`/login`) → sets a signed `hoa_auth` cookie.
-2. **Pick yourself** from the roster (`/whoami`) → sets `hoa_user` cookie.
-
-That selection is your identity throughout the app; admin status comes from
-the `profiles.role` column. Rotating `APP_PASSWORD` invalidates every session.
+1. Admin pre-creates members from `/members` (just name + email, no password).
+2. Member visits `/login`, enters their email.
+3. If the email matches a profile, we generate a single-use, 30-minute token
+   (stored hashed) and email a sign-in link via Resend.
+4. Clicking the link verifies the token and sets a signed session cookie
+   (`hoa_session` = `<profile_id>.<HMAC>`) that lasts **1 year** and slides
+   on every request — active users effectively never re-authenticate.
+5. Admin status comes from `profiles.role`. Rotating `SESSION_SECRET`
+   invalidates every existing session.
 
 The app talks to Supabase using the **service-role key** server-side only. RLS
 is enabled with no policies (anon = denied), so the anon key is unused.
@@ -55,7 +58,7 @@ Copy `.env.example` to `.env.local`:
 
 | Var | What |
 |---|---|
-| `APP_PASSWORD` | Shared password for the board. |
+| `SESSION_SECRET` | Random 32+ byte string used to sign session cookies. |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Used by every server query and the webhook. |
 | `RESEND_API_KEY` | Auto-set by the Vercel integration. |

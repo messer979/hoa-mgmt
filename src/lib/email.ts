@@ -146,3 +146,52 @@ function escapeHtml(s: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+export async function sendMagicLink(args: {
+  to: string;
+  link: string;
+  recipientName: string | null;
+}): Promise<SendResult> {
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!from) throw new Error("RESEND_FROM_EMAIL not set");
+
+  const greeting = args.recipientName ? `Hi ${args.recipientName},` : "Hi,";
+  const text = [
+    greeting,
+    "",
+    "Click the link below to sign in to the HOA board app:",
+    "",
+    args.link,
+    "",
+    "This link expires in 30 minutes and can only be used once. If you didn't request it, you can ignore this email.",
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: system-ui, -apple-system, sans-serif; line-height:1.5;">
+      <p>${escapeHtml(greeting)}</p>
+      <p>Click the button below to sign in to the HOA board app:</p>
+      <p>
+        <a href="${args.link}"
+           style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none;font-weight:500">
+          Sign in
+        </a>
+      </p>
+      <p style="color:#666;font-size:12px">
+        Or paste this URL: <a href="${args.link}">${escapeHtml(args.link)}</a><br/>
+        This link expires in 30 minutes and can only be used once.
+        If you didn't request it, you can ignore this email.
+      </p>
+    </div>
+  `;
+
+  const res = await client().emails.send({
+    from,
+    to: [args.to],
+    replyTo: replyTo(),
+    subject: "Sign in to the HOA board",
+    text,
+    html,
+  });
+  const rawId = res.data?.id ?? null;
+  return { rawId, messageId: normalizeMessageId(rawId) };
+}
