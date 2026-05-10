@@ -37,18 +37,30 @@ type Marker = {
   date: string | null;
 };
 
-// Apple Mail / iOS / Gmail "On <date>, <name> wrote:" attribution lines.
-// Optionally followed by `<email>` and accepting weird whitespace / newlines.
-const ON_WROTE_RE =
-  /^[ \t>]*On\s+([^\n]{4,160}?)(?:\s*[,\n])\s*([^<\n]+?)?\s*(?:<([^>\n]+)>)?\s+wrote\s*:\s*$/gim;
+// Long attribution lines often wrap before "wrote:". Pre-join them so the
+// single-line regex below can find every attribution. Also normalizes weird
+// whitespace from HTML-derived text.
+function unwrapAttributions(text: string): string {
+  return text
+    .replace(/(<[^>\n]+>|[A-Za-z][^\n<]*)\s*\r?\n[ \t>]*wrote\s*:/gi, "$1 wrote:")
+    .replace(/[ \t]+\n/g, "\n");
+}
 
-// Outlook block:
-//   From: Name <addr>
-//   Sent: <date>
-//   To: ...
-//   Subject: ...
+// "On <date>, <name> [<email>] wrote:" attribution (Gmail, Apple Mail, iOS).
+// Tolerant about whitespace and quote-prefix levels (>, >>, >>>).
+const ON_WROTE_RE =
+  /^[ \t>]*On\s+([^\n]{4,200}?)(?:[,]\s*|\s+)([^<\n]+?)?\s*(?:<([^>\n]+)>)?\s+wrote\s*:\s*$/gim;
+
+// "From: ... Sent|Date: ... [To: ...] [Cc: ...] [Subject: ...]" header block.
+// Outlook uses Sent; Apple/Gmail use Date. Subject/To/Cc are all optional —
+// some clients omit them when forwarding.
 const OUTLOOK_RE =
-  /^[ \t>]*From:\s*([^<\n]+?)\s*(?:<([^>\n]+)>)?\s*\r?\n[ \t>]*Sent:\s*([^\n]+)\r?\n(?:[ \t>]*To:[^\n]*\r?\n)?(?:[ \t>]*Cc:[^\n]*\r?\n)?[ \t>]*Subject:\s*[^\n]*\r?\n+/gim;
+  /^[ \t>]*From:\s*([^<\n]+?)\s*(?:<([^>\n]+)>)?\s*\r?\n[ \t>]*(?:Sent|Date):\s*([^\n]+)\r?\n(?:[ \t>]*(?:To|Cc|Reply-To|Subject):[^\n]*\r?\n){0,4}/gim;
+
+// Gmail's "---------- Forwarded message ---------" wrapper. We treat the
+// block as a segment break and pull From/Date out of its header.
+const FORWARDED_RE =
+  /^[ \t>]*-{2,}\s*(?:Forwarded message|Original Message)\s*-{2,}\s*\r?\n((?:[ \t>]*[A-Za-z][A-Za-z-]+:\s*[^\n]+\r?\n){1,6})/gim;
 
 function parseDateLoose(s: string | null | undefined): string | null {
   if (!s) return null;
@@ -67,6 +79,32 @@ function dequote(s: string): string {
     .trim();
 }
 
+function readHeaders(block: string): {
+  from_name: string | null;
+  from_email: string | null;
+  date: string | null;
+} {
+  const headers: Record<string, string> = {};
+  for (const line of block.split(/\r?\n/)) {
+    const m = line.match(/^[ \t>]*([A-Za-z][A-Za-z-]+):\s*(.+?)\s*$/);
+    if (m) headers[m[1].toLowerCase()] = m[2];
+  }
+  let name: string | null = null;
+  let email: string | null = null;
+  if (headers.from) {
+    const f = headers.from.match(/^(.*?)\s*<([^>]+)>/);
+    if (f) {
+      name = (f[1] || "").trim() || null;
+      email = f[2].trim().toLowerCase();
+    } else {
+      const e = headers.from.match(/[^\s<>"']+@[^\s<>"']+/);
+      email = e ? e[0].trim().toLowerCase() : null;
+      name = headers.from.replace(/[<>]/g, "").trim() || null;
+    }
+  }
+  return { from_name: name, from_email: email, date: parseDateLoose(headers.date ?? headers.sent ?? null) };
+}
+
 // Split a body into the new content + an oldest-first list of historical
 // segments parsed from the quoted-reply markers. Best-effort — falls through
 // to "no history" if the body doesn't contain recognizable markers.
@@ -74,10 +112,11 @@ export function parseQuotedHistory(
   text: string | null | undefined,
 ): { newContent: string; history: QuotedSegment[] } {
   if (!text) return { newContent: "", history: [] };
+  const src = unwrapAttributions(text);
 
   const markers: Marker[] = [];
 
-  for (const m of text.matchAll(ON_WROTE_RE)) {
+  for (const m of src.matchAll(ON_WROTE_RE)) {
     if (m.index === undefined) continue;
     markers.push({
       index: m.index,
@@ -87,7 +126,7 @@ export function parseQuotedHistory(
       date: parseDateLoose(m[1]),
     });
   }
-  for (const m of text.matchAll(OUTLOOK_RE)) {
+  for (const m of src.matchAll(OUTLOOK_RE)) {
     if (m.index === undefined) continue;
     markers.push({
       index: m.index,
@@ -97,20 +136,40 @@ export function parseQuotedHistory(
       date: parseDateLoose(m[3]),
     });
   }
-
-  if (markers.length === 0) {
-    return { newContent: stripQuotedReply(text), history: [] };
+  for (const m of src.matchAll(FORWARDED_RE)) {
+    if (m.index === undefined) continue;
+    const headers = readHeaders(m[1] ?? "");
+    markers.push({
+      index: m.index,
+      length: m[0].length,
+      author_name: headers.from_name,
+      author_email: headers.from_email,
+      date: headers.date,
+    });
   }
 
+  if (markers.length === 0) {
+    return { newContent: stripQuotedReply(src), history: [] };
+  }
+
+  // De-duplicate: when "Forwarded message" header sits right next to a
+  // matching "On X wrote:" line, both regexes match and we'd double-count.
   markers.sort((a, b) => a.index - b.index);
-  const newContent = stripQuotedReply(text.slice(0, markers[0].index));
+  const deduped: Marker[] = [];
+  for (const m of markers) {
+    const last = deduped[deduped.length - 1];
+    if (last && Math.abs(last.index - m.index) < 200) continue;
+    deduped.push(m);
+  }
+
+  const newContent = stripQuotedReply(src.slice(0, deduped[0].index));
 
   const segments: QuotedSegment[] = [];
-  for (let i = 0; i < markers.length; i++) {
-    const m = markers[i];
+  for (let i = 0; i < deduped.length; i++) {
+    const m = deduped[i];
     const start = m.index + m.length;
-    const end = i + 1 < markers.length ? markers[i + 1].index : text.length;
-    const body = dequote(text.slice(start, end));
+    const end = i + 1 < deduped.length ? deduped[i + 1].index : src.length;
+    const body = dequote(src.slice(start, end));
     if (!body) continue;
     segments.push({
       author_name: m.author_name,

@@ -7,6 +7,7 @@ import {
   linkEmailToTopic,
   linkEmailToProfile,
   markProcessed,
+  reparseEmailHistory,
 } from "../actions";
 import type { Choice } from "@/lib/types";
 
@@ -177,7 +178,7 @@ export default async function EmailDetail({
         </section>
       )}
 
-      <section className="card flex items-center gap-2">
+      <section className="card flex items-center gap-2 flex-wrap">
         <form action={markProcessed}>
           <input type="hidden" name="id" value={email.id} />
           <input type="hidden" name="processed" value={email.processed ? "false" : "true"} />
@@ -185,6 +186,14 @@ export default async function EmailDetail({
             {email.processed ? "Mark as new" : "Mark processed (no vote)"}
           </button>
         </form>
+        {email.topic_id && (
+          <form action={reparseEmailHistory}>
+            <input type="hidden" name="id" value={email.id} />
+            <button className="btn" title="Re-run the quoted-history parser on this email's body and rebuild the conversation messages.">
+              Re-parse history
+            </button>
+          </form>
+        )}
       </section>
     </div>
   );
