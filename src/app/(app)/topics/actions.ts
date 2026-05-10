@@ -117,16 +117,30 @@ export async function postReply(formData: FormData) {
     .single();
   if (msgErr) throw new Error(msgErr.message);
 
-  if (fanOut && process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL) {
+  if (!fanOut) {
+    console.log("postReply: fan-out disabled by user");
+  } else if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
+    console.warn("postReply: skipping fan-out — RESEND_API_KEY or RESEND_FROM_EMAIL is not set");
+  } else {
     try {
-      // Fan out to roster, excluding the author so they don't get their own reply.
+      // Fan out to the full roster (matching the announcement behavior so the
+      // author also gets a confirmation copy in their inbox).
       const { data: members } = await supabase
         .from("profiles")
-        .select("email")
-        .neq("id", me.id);
+        .select("email");
       const recipients = (members ?? [])
         .map((m) => m.email)
         .filter((e): e is string => !!e);
+
+      console.log("postReply: fanning out", {
+        topic_id,
+        recipientCount: recipients.length,
+        from: process.env.RESEND_FROM_EMAIL,
+      });
+
+      if (!recipients.length) {
+        console.warn("postReply: no recipients found in profiles table");
+      }
 
       if (recipients.length) {
         // Find threading anchors: the most recent prior email on this topic.
@@ -155,6 +169,7 @@ export async function postReply(formData: FormData) {
           inReplyTo,
           references,
         });
+        console.log("postReply: sent", { messageId: sent.messageId, rawId: sent.rawId });
 
         // Persist outbound email row + back-link the topic_message to it so
         // inbound replies can thread back via In-Reply-To.

@@ -243,8 +243,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Derive plain-text from HTML when the email arrived HTML-only (Gmail's
-  // default) so parseQuotedHistory + the conversation row have content.
-  if (!text && html) {
+  // default), or when the text part is just whitespace.
+  if (!text.trim() && html) {
     text = htmlToText(html);
     console.log("inbound-email: derived text from html", { textLen: text.length });
   }
@@ -449,8 +449,19 @@ export async function POST(req: NextRequest) {
       else console.log("inbound-email: backfilled history", { count: rows.length });
     }
 
-    // The new content message.
-    const body = newContent || stripQuotedReply(text) || subject || "(no message)";
+    // The new content message. Try the parsed "new content" first, then a
+    // raw strip, then the bare text, then fall through to the subject.
+    const body =
+      newContent ||
+      stripQuotedReply(text) ||
+      text.trim() ||
+      subject ||
+      "(no message)";
+    console.log("inbound-email: conversation body", {
+      newContentLen: newContent.length,
+      historyCount: history.length,
+      finalBodyLen: body.length,
+    });
     await supabase
       .from("topic_messages")
       .insert({
