@@ -46,5 +46,19 @@ export type EmailRow = {
   topic_id: string | null;
   matched_profile_id: string | null;
   processed: boolean;
+  is_outbound: boolean;
+  in_reply_to: string | null;
+  references_ids: string[] | null;
   received_at: string;
+};
+
+export type TopicMessage = {
+  id: string;
+  topic_id: string;
+  author_profile_id: string | null;
+  body_text: string;
+  body_html: string | null;
+  source: "email" | "web";
+  email_id: string | null;
+  created_at: string;
 };

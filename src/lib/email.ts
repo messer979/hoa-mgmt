@@ -10,13 +10,25 @@ function client() {
   return _resend;
 }
 
+export type SendResult = {
+  /** Resend's message id, normalized to "<id@host>" RFC 5322 form. */
+  messageId: string | null;
+  /** Raw value Resend returned (no angle brackets). */
+  rawId: string | null;
+};
+
+function normalizeMessageId(id: string | null | undefined): string | null {
+  if (!id) return null;
+  return id.startsWith("<") ? id : `<${id}>`;
+}
+
 export async function sendTopicAnnouncement(args: {
   to: string[];
   topicId: string;
   title: string;
   description: string | null;
   closesAt: string | null;
-}) {
+}): Promise<SendResult> {
   const from = process.env.RESEND_FROM_EMAIL;
   if (!from) throw new Error("RESEND_FROM_EMAIL not set");
 
@@ -46,7 +58,7 @@ export async function sendTopicAnnouncement(args: {
     </div>
   `;
 
-  return client().emails.send({
+  const res = await client().emails.send({
     from,
     to: args.to,
     replyTo: process.env.RESEND_INBOUND_ADDRESS,
@@ -54,6 +66,62 @@ export async function sendTopicAnnouncement(args: {
     text,
     html,
   });
+  const rawId = res.data?.id ?? null;
+  return { rawId, messageId: normalizeMessageId(rawId) };
+}
+
+export async function sendThreadReply(args: {
+  to: string[];
+  topicId: string;
+  topicTitle: string;
+  bodyText: string;
+  authorName: string | null;
+  inReplyTo: string | null;
+  references: string[];
+}): Promise<SendResult> {
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!from) throw new Error("RESEND_FROM_EMAIL not set");
+
+  const baseUrl = await getBaseUrl();
+  const link = `${baseUrl}/topics/${args.topicId}`;
+  const subject = args.topicTitle.startsWith("Re:")
+    ? args.topicTitle
+    : `Re: ${args.topicTitle}`;
+
+  const attribution = args.authorName ? `${args.authorName} wrote:` : "Someone wrote:";
+  const text = [
+    args.bodyText.trim(),
+    "",
+    "—",
+    `${attribution} (via the board website — ${link})`,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: system-ui, -apple-system, sans-serif; line-height:1.5;">
+      <p style="white-space:pre-wrap">${escapeHtml(args.bodyText)}</p>
+      <hr style="border:none;border-top:1px solid #ddd;margin:12px 0" />
+      <p style="color:#666;font-size:12px">
+        ${escapeHtml(attribution)}
+        Sent via the board website — <a href="${link}">${link}</a>
+      </p>
+    </div>
+  `;
+
+  const headers: Record<string, string> = {};
+  if (args.inReplyTo) headers["In-Reply-To"] = args.inReplyTo;
+  if (args.references.length) headers["References"] = args.references.join(" ");
+
+  const res = await client().emails.send({
+    from,
+    to: args.to,
+    replyTo: process.env.RESEND_INBOUND_ADDRESS,
+    subject,
+    text,
+    html,
+    headers,
+  });
+  const rawId = res.data?.id ?? null;
+  return { rawId, messageId: normalizeMessageId(rawId) };
 }
 
 function escapeHtml(s: string) {

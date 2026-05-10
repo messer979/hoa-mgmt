@@ -1,25 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { Webhook } from "svix";
 import { createAdminClient } from "@/lib/supabase/server";
+import { stripQuotedReply } from "@/lib/text";
 
-// Resend Inbound posts JSON; payload is signed with Svix headers.
-// Docs: https://resend.com/docs/dashboard/webhooks/introduction
 export const runtime = "nodejs";
 
+type AnyObj = Record<string, unknown>;
 type InboundPayload = {
-  type?: string; // e.g. "email.received"
-  data?: {
-    from?: { email?: string; name?: string } | string;
-    to?: Array<{ email?: string; name?: string } | string> | string;
-    subject?: string;
-    text?: string;
-    html?: string;
-    headers?: Record<string, string>;
-    message_id?: string;
-    messageId?: string;
-    received_at?: string;
-  };
-} & Record<string, unknown>;
+  type?: string;
+  data?: AnyObj;
+} & AnyObj;
 
 function pickAddress(v: unknown): { email: string; name: string | null } {
   if (typeof v === "string") return { email: v, name: null };
@@ -29,10 +19,39 @@ function pickAddress(v: unknown): { email: string; name: string | null } {
   }
   return { email: "", name: null };
 }
-
 function pickFirstAddress(v: unknown) {
   if (Array.isArray(v) && v.length) return pickAddress(v[0]);
   return pickAddress(v);
+}
+
+function readHeader(data: AnyObj, ...names: string[]): string | null {
+  for (const name of names) {
+    const camel = name.toLowerCase().replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+    const snake = name.toLowerCase().replace(/-/g, "_");
+    const direct = (data as AnyObj)[camel] ?? (data as AnyObj)[snake];
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+    const headers = (data as { headers?: AnyObj }).headers;
+    if (headers && typeof headers === "object") {
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() === name.toLowerCase()) {
+          const v = headers[key];
+          if (typeof v === "string" && v.trim()) return v.trim();
+          if (Array.isArray(v) && v.length && typeof v[0] === "string") return v[0].trim();
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function readReferences(data: AnyObj): string[] {
+  const v =
+    (data as AnyObj).references ??
+    (data as { headers?: AnyObj }).headers?.["References"] ??
+    (data as { headers?: AnyObj }).headers?.["references"];
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+  if (typeof v === "string") return v.split(/\s+/).filter(Boolean);
+  return [];
 }
 
 export async function POST(req: NextRequest) {
@@ -55,7 +74,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "invalid signature" }, { status: 401 });
     }
   } else {
-    // Allow unsigned posts only when no secret is configured (e.g. local dev).
     payload = JSON.parse(raw) as InboundPayload;
   }
 
@@ -63,14 +81,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, ignored: payload.type });
   }
 
-  const data = payload.data ?? {};
+  const data = (payload.data ?? {}) as AnyObj;
   const from = pickAddress(data.from);
   const to = pickFirstAddress(data.to);
-  const subject = (data.subject ?? "").toString();
-  const text = (data.text ?? "").toString();
-  const html = (data.html ?? "").toString();
-  const messageId = (data.message_id ?? data.messageId ?? null) as string | null;
-  const receivedAt = data.received_at ? new Date(data.received_at).toISOString() : new Date().toISOString();
+  const subject = ((data.subject as string) ?? "").toString();
+  const text = ((data.text as string) ?? "").toString();
+  const html = ((data.html as string) ?? "").toString();
+  const messageId = readHeader(data, "Message-ID", "messageId", "message_id");
+  const inReplyTo = readHeader(data, "In-Reply-To", "inReplyTo", "in_reply_to");
+  const referencesIds = readReferences(data);
+  const receivedRaw = data.received_at;
+  const receivedAt =
+    typeof receivedRaw === "string"
+      ? new Date(receivedRaw).toISOString()
+      : new Date().toISOString();
 
   if (!from.email) {
     return NextResponse.json({ ok: false, error: "missing from address" }, { status: 400 });
@@ -78,16 +102,27 @@ export async function POST(req: NextRequest) {
 
   const supabase = createAdminClient();
 
-  // Try to match the sender to a known member.
+  // Match the sender to a known member (case-insensitive).
   const { data: profile } = await supabase
     .from("profiles")
     .select("id")
     .ilike("email", from.email)
     .maybeSingle();
 
-  // Try to link to a topic by subject (e.g. "Re: <topic title>").
+  // Resolve topic by walking the thread first, then falling back to subject.
   let topicId: string | null = null;
-  if (subject) {
+  const ancestorIds = [inReplyTo, ...referencesIds].filter((x): x is string => !!x);
+  if (ancestorIds.length) {
+    const { data: parent } = await supabase
+      .from("emails")
+      .select("topic_id")
+      .in("message_id", ancestorIds)
+      .not("topic_id", "is", null)
+      .limit(1)
+      .maybeSingle();
+    if (parent?.topic_id) topicId = parent.topic_id;
+  }
+  if (!topicId && subject) {
     const cleaned = subject.replace(/^\s*(re|fw|fwd):\s*/i, "").trim();
     if (cleaned) {
       const { data: topic } = await supabase
@@ -99,27 +134,52 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { error } = await supabase.from("emails").insert({
-    message_id: messageId,
-    from_email: from.email,
-    from_name: from.name,
-    to_email: to.email || null,
-    subject: subject || null,
-    body_text: text || null,
-    body_html: html || null,
-    matched_profile_id: profile?.id ?? null,
-    topic_id: topicId,
-    raw: payload as unknown as object,
-    received_at: receivedAt,
-  });
+  const { data: inserted, error } = await supabase
+    .from("emails")
+    .insert({
+      message_id: messageId,
+      from_email: from.email,
+      from_name: from.name,
+      to_email: to.email || null,
+      subject: subject || null,
+      body_text: text || null,
+      body_html: html || null,
+      matched_profile_id: profile?.id ?? null,
+      topic_id: topicId,
+      in_reply_to: inReplyTo,
+      references_ids: referencesIds.length ? referencesIds : null,
+      is_outbound: false,
+      raw: payload as unknown as object,
+      received_at: receivedAt,
+    })
+    .select("id")
+    .single();
 
   if (error) {
-    // Likely a duplicate message_id — treat as success so Resend doesn't retry forever.
     if (error.code === "23505") {
+      // duplicate message_id — treat as success so Resend stops retrying
       return NextResponse.json({ ok: true, duplicate: true });
     }
     console.error("inbound-email insert failed", error);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+
+  // If we know the topic, materialize the conversation message now.
+  if (topicId && inserted) {
+    const stripped = stripQuotedReply(text) || (subject || "(no message)");
+    await supabase
+      .from("topic_messages")
+      .insert({
+        topic_id: topicId,
+        author_profile_id: profile?.id ?? null,
+        body_text: stripped,
+        body_html: html || null,
+        source: "email",
+        email_id: inserted.id,
+        created_at: receivedAt,
+      })
+      .select("id")
+      .maybeSingle();
   }
 
   return NextResponse.json({ ok: true });
