@@ -10,6 +10,21 @@ function client() {
   return _resend;
 }
 
+let _warnedNoInbound = false;
+function replyTo(): string | undefined {
+  const v = process.env.RESEND_INBOUND_ADDRESS;
+  if (!v && !_warnedNoInbound) {
+    _warnedNoInbound = true;
+    console.warn(
+      "RESEND_INBOUND_ADDRESS is not set — outbound emails will have no Reply-To, " +
+        "so member replies will go to RESEND_FROM_EMAIL (a sending-only domain) " +
+        "and never reach the /api/webhooks/inbound-email webhook. " +
+        "Configure Resend Inbound and set this env var.",
+    );
+  }
+  return v || undefined;
+}
+
 export type SendResult = {
   /** Resend's message id, normalized to "<id@host>" RFC 5322 form. */
   messageId: string | null;
@@ -61,7 +76,7 @@ export async function sendTopicAnnouncement(args: {
   const res = await client().emails.send({
     from,
     to: args.to,
-    replyTo: process.env.RESEND_INBOUND_ADDRESS,
+    replyTo: replyTo(),
     subject: args.title,
     text,
     html,
@@ -114,7 +129,7 @@ export async function sendThreadReply(args: {
   const res = await client().emails.send({
     from,
     to: args.to,
-    replyTo: process.env.RESEND_INBOUND_ADDRESS,
+    replyTo: replyTo(),
     subject,
     text,
     html,
