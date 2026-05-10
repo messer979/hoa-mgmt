@@ -77,11 +77,26 @@ export async function POST(req: NextRequest) {
     payload = JSON.parse(raw) as InboundPayload;
   }
 
-  if (payload.type && !payload.type.startsWith("email")) {
-    return NextResponse.json({ ok: true, ignored: payload.type });
+  // Resend sends a variety of event types: outbound delivery events
+  // (email.sent, email.delivered, email.bounced, …) plus inbound events
+  // (inbound.received / inbound.email / similar). Only process events that
+  // actually carry a parsed message body — everything else is logged and
+  // acknowledged so Resend stops retrying.
+  const data = (payload.data ?? {}) as AnyObj;
+  const looksLikeMessage =
+    typeof data.from !== "undefined" &&
+    (typeof data.text !== "undefined" ||
+      typeof data.html !== "undefined" ||
+      typeof data.subject !== "undefined");
+
+  if (!looksLikeMessage) {
+    console.log("inbound-email: ignoring non-message event", {
+      type: payload.type,
+      keys: Object.keys(data),
+    });
+    return NextResponse.json({ ok: true, ignored: payload.type ?? "unknown" });
   }
 
-  const data = (payload.data ?? {}) as AnyObj;
   const from = pickAddress(data.from);
   const to = pickFirstAddress(data.to);
   const subject = ((data.subject as string) ?? "").toString();
@@ -97,8 +112,21 @@ export async function POST(req: NextRequest) {
       : new Date().toISOString();
 
   if (!from.email) {
+    console.warn("inbound-email: payload missing from address", {
+      type: payload.type,
+      dataKeys: Object.keys(data),
+    });
     return NextResponse.json({ ok: false, error: "missing from address" }, { status: 400 });
   }
+
+  console.log("inbound-email: received", {
+    type: payload.type,
+    from: from.email,
+    subject,
+    messageId,
+    inReplyTo,
+    referencesCount: referencesIds.length,
+  });
 
   const supabase = createAdminClient();
 
@@ -133,6 +161,12 @@ export async function POST(req: NextRequest) {
       if (topic) topicId = topic.id;
     }
   }
+
+  console.log("inbound-email: resolved", {
+    matchedProfile: profile?.id ?? null,
+    topicId,
+    via: ancestorIds.length ? "thread-headers" : subject ? "subject-fallback" : "none",
+  });
 
   const { data: inserted, error } = await supabase
     .from("emails")
