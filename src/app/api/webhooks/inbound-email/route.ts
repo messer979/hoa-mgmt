@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { Webhook } from "svix";
+import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase/server";
 import { stripQuotedReply } from "@/lib/text";
 
@@ -144,45 +145,50 @@ function pickSubject(data: AnyObj): string {
 }
 
 // Resend's inbound webhook payload is just an envelope — body text/html is
-// NOT included. Fetch it on demand using the email_id from the webhook.
-// We try a couple of likely API paths since Resend has shipped both shapes.
+// NOT included (per Resend docs: "Webhooks do not include the email body,
+// headers, or attachments, only their metadata. You must call the Received
+// emails API to retrieve them."). The official SDK call is
+// `resend.emails.receiving.get(email_id)`.
 async function fetchInboundBody(
-  emailId: string
+  emailId: string,
 ): Promise<{ text: string; html: string; raw: AnyObj } | null> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return null;
 
-  const urls = [
-    `https://api.resend.com/emails/${emailId}`,
-    `https://api.resend.com/inbound/emails/${emailId}`,
-  ];
+  const resend = new Resend(apiKey);
+  // Cast: the receiving namespace was added in a recent SDK version and may
+  // not be in the type defs we're pinned to.
+  const receiving = (resend.emails as unknown as {
+    receiving?: { get: (id: string) => Promise<{ data?: AnyObj | null; error?: unknown }> };
+  }).receiving;
 
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        cache: "no-store",
-      });
-      console.log("inbound-email: GET", url, "→", res.status);
-      if (!res.ok) continue;
-      const json = (await res.json()) as AnyObj;
-      const text = pickBodyText(json);
-      const html = pickBodyHtml(json);
-      console.log("inbound-email: fetched body", {
-        url,
-        keys: Object.keys(json),
-        textLen: text.length,
-        htmlLen: html.length,
-      });
-      if (text || html) return { text, html, raw: json };
-    } catch (e) {
-      console.error("inbound-email: fetch failed", url, e);
-    }
+  if (!receiving?.get) {
+    console.error(
+      "inbound-email: resend.emails.receiving.get is unavailable — upgrade the resend SDK (npm i resend@latest)",
+    );
+    return null;
   }
-  return null;
+
+  try {
+    const result = await receiving.get(emailId);
+    if (result.error) {
+      console.error("inbound-email: receiving.get error", result.error);
+      return null;
+    }
+    const data = (result.data ?? {}) as AnyObj;
+    const text = pickBodyText(data);
+    const html = pickBodyHtml(data);
+    console.log("inbound-email: fetched body via SDK", {
+      keys: Object.keys(data),
+      textLen: text.length,
+      htmlLen: html.length,
+    });
+    if (text || html) return { text, html, raw: data };
+    return { text: "", html: "", raw: data };
+  } catch (e) {
+    console.error("inbound-email: receiving.get threw", e);
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
