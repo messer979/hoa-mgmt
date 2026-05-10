@@ -390,7 +390,6 @@ export default async function TopicDetail({
                 </span>
               }
               confirmLabel="Delete topic"
-              typeToConfirm={topic.title}
               hidden={{ id: topic.id }}
               action={deleteTopic}
             />
