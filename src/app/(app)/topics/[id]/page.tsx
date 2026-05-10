@@ -45,7 +45,9 @@ export default async function TopicDetail({
         .eq("topic_id", id),
       supabase
         .from("topic_messages")
-        .select("id,topic_id,author_profile_id,body_text,body_html,source,email_id,created_at")
+        .select(
+          "id,topic_id,author_profile_id,author_email,author_name,body_text,body_html,source,email_id,extracted,created_at",
+        )
         .eq("topic_id", id)
         .order("created_at", { ascending: true }),
       isAdmin
@@ -84,6 +86,11 @@ export default async function TopicDetail({
     if (m.author_profile_id) {
       const p = profileById.get(m.author_profile_id);
       if (p) return p.full_name ?? p.email;
+    }
+    if (m.author_name || m.author_email) {
+      return m.author_name && m.author_email
+        ? `${m.author_name} <${m.author_email}>`
+        : m.author_name ?? m.author_email!;
     }
     if (m.email_id) {
       const e = emailFromMap.get(m.email_id);
@@ -174,6 +181,11 @@ export default async function TopicDetail({
                     <span>·</span>
                     <span>{new Date(m.created_at).toLocaleString()}</span>
                     <span className="badge">{m.source}</span>
+                    {m.extracted && (
+                      <span className="badge text-amber-700 border-amber-600">
+                        from quoted history
+                      </span>
+                    )}
                     {isAdmin && (
                       <span className="ml-auto flex items-center gap-1">
                         {otherTopics.length > 0 && (

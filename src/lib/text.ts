@@ -1,3 +1,108 @@
+export type QuotedSegment = {
+  author_name: string | null;
+  author_email: string | null;
+  body: string;
+  date: string | null; // ISO timestamp if we could parse one
+};
+
+type Marker = {
+  index: number;
+  length: number;
+  author_name: string | null;
+  author_email: string | null;
+  date: string | null;
+};
+
+// Apple Mail / iOS / Gmail "On <date>, <name> wrote:" attribution lines.
+// Optionally followed by `<email>` and accepting weird whitespace / newlines.
+const ON_WROTE_RE =
+  /^[ \t>]*On\s+([^\n]{4,160}?)(?:\s*[,\n])\s*([^<\n]+?)?\s*(?:<([^>\n]+)>)?\s+wrote\s*:\s*$/gim;
+
+// Outlook block:
+//   From: Name <addr>
+//   Sent: <date>
+//   To: ...
+//   Subject: ...
+const OUTLOOK_RE =
+  /^[ \t>]*From:\s*([^<\n]+?)\s*(?:<([^>\n]+)>)?\s*\r?\n[ \t>]*Sent:\s*([^\n]+)\r?\n(?:[ \t>]*To:[^\n]*\r?\n)?(?:[ \t>]*Cc:[^\n]*\r?\n)?[ \t>]*Subject:\s*[^\n]*\r?\n+/gim;
+
+function parseDateLoose(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const cleaned = s.replace(/\s+/g, " ").trim();
+  const d = new Date(cleaned);
+  if (!isNaN(d.getTime())) return d.toISOString();
+  return null;
+}
+
+function dequote(s: string): string {
+  return s
+    .split("\n")
+    .map((line) => line.replace(/^\s*>+\s?/, ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Split a body into the new content + an oldest-first list of historical
+// segments parsed from the quoted-reply markers. Best-effort — falls through
+// to "no history" if the body doesn't contain recognizable markers.
+export function parseQuotedHistory(
+  text: string | null | undefined,
+): { newContent: string; history: QuotedSegment[] } {
+  if (!text) return { newContent: "", history: [] };
+
+  const markers: Marker[] = [];
+
+  for (const m of text.matchAll(ON_WROTE_RE)) {
+    if (m.index === undefined) continue;
+    markers.push({
+      index: m.index,
+      length: m[0].length,
+      author_name: (m[2] ?? "").trim() || null,
+      author_email: (m[3] ?? "").trim().toLowerCase() || null,
+      date: parseDateLoose(m[1]),
+    });
+  }
+  for (const m of text.matchAll(OUTLOOK_RE)) {
+    if (m.index === undefined) continue;
+    markers.push({
+      index: m.index,
+      length: m[0].length,
+      author_name: (m[1] ?? "").trim() || null,
+      author_email: (m[2] ?? "").trim().toLowerCase() || null,
+      date: parseDateLoose(m[3]),
+    });
+  }
+
+  if (markers.length === 0) {
+    return { newContent: stripQuotedReply(text), history: [] };
+  }
+
+  markers.sort((a, b) => a.index - b.index);
+  const newContent = stripQuotedReply(text.slice(0, markers[0].index));
+
+  const segments: QuotedSegment[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const m = markers[i];
+    const start = m.index + m.length;
+    const end = i + 1 < markers.length ? markers[i + 1].index : text.length;
+    const body = dequote(text.slice(start, end));
+    if (!body) continue;
+    segments.push({
+      author_name: m.author_name,
+      author_email: m.author_email,
+      body,
+      date: m.date,
+    });
+  }
+
+  // Quoted bodies stack newest-on-top; flip so callers can write
+  // oldest-first conversation rows.
+  segments.reverse();
+
+  return { newContent, history: segments };
+}
+
 // Strip the "On X wrote:" / "-----Original Message-----" tail and quoted (>)
 // lines from a reply so the conversation view shows only the new content.
 export function stripQuotedReply(text: string | null | undefined): string {

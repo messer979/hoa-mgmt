@@ -56,9 +56,12 @@ export type TopicMessage = {
   id: string;
   topic_id: string;
   author_profile_id: string | null;
+  author_email: string | null;
+  author_name: string | null;
   body_text: string;
   body_html: string | null;
   source: "email" | "web";
   email_id: string | null;
+  extracted: boolean;
   created_at: string;
 };

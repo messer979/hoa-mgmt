@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { Webhook } from "svix";
 import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase/server";
-import { stripQuotedReply } from "@/lib/text";
+import { parseQuotedHistory, stripQuotedReply } from "@/lib/text";
 
 export const runtime = "nodejs";
 
@@ -328,10 +328,44 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Auto-create a topic when the email looks like a brand-new discussion.
+  // Two cases: (a) net-new email with a clean subject and no parent on file,
+  // (b) CC'd onto a mid-flight thread we've never seen. We only do this when
+  // the sender is a known member, so spam to the inbound address still lands
+  // in /inbox for admin triage rather than spawning junk topics.
+  let topicAutoCreated = false;
+  if (!topicId && profile) {
+    const cleanedSubject = (subject || "").replace(/^\s*(re|fw|fwd):\s*/i, "").trim();
+    const title = cleanedSubject || `(no subject) from ${from.email}`;
+    const { data: newTopic, error: topicErr } = await supabase
+      .from("topics")
+      .insert({
+        title,
+        description: null,
+        created_by: profile.id,
+        status: "open",
+      })
+      .select("id")
+      .single();
+    if (topicErr) {
+      console.error("inbound-email: auto-create topic failed", topicErr);
+    } else {
+      topicId = newTopic!.id;
+      topicAutoCreated = true;
+    }
+  }
+
   console.log("inbound-email: resolved", {
     matchedProfile: profile?.id ?? null,
     topicId,
-    via: ancestorIds.length ? "thread-headers" : subject ? "subject-fallback" : "none",
+    autoCreated: topicAutoCreated,
+    via: ancestorIds.length
+      ? "thread-headers"
+      : subject && !topicAutoCreated
+      ? "subject-fallback"
+      : topicAutoCreated
+      ? "auto-create"
+      : "none",
   });
 
   const { data: inserted, error } = await supabase
@@ -364,23 +398,69 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  // If we know the topic, materialize the conversation message now.
   if (topicId && inserted) {
-    const stripped = stripQuotedReply(text) || (subject || "(no message)");
+    const { newContent, history } = parseQuotedHistory(text);
+
+    // Backfill quoted history first, oldest-first, dated to "before received".
+    if (topicAutoCreated && history.length) {
+      // Try to map each historical author email to a profile in one round-trip.
+      const emails = Array.from(
+        new Set(history.map((h) => h.author_email).filter((e): e is string => !!e)),
+      );
+      const profileByEmail = new Map<string, string>();
+      if (emails.length) {
+        const { data: matched } = await supabase
+          .from("profiles")
+          .select("id,email")
+          .in("email", emails);
+        for (const p of matched ?? []) {
+          if (p.email) profileByEmail.set(p.email.toLowerCase(), p.id);
+        }
+      }
+
+      // Spread historical timestamps just before the received_at so chrono
+      // ordering is correct in the conversation view.
+      const baseMs = new Date(receivedAt).getTime();
+      const rows = history.map((h, i) => ({
+        topic_id: topicId,
+        author_profile_id:
+          h.author_email ? profileByEmail.get(h.author_email.toLowerCase()) ?? null : null,
+        author_email: h.author_email,
+        author_name: h.author_name,
+        body_text: h.body || "(empty)",
+        body_html: null,
+        source: "email" as const,
+        email_id: null,
+        extracted: true,
+        // Use parsed date if present, otherwise nudge each older message back
+        // by 1 second so they sort oldest→newest before the new one.
+        created_at:
+          h.date ?? new Date(baseMs - (history.length - i) * 1000).toISOString(),
+      }));
+      const { error: histErr } = await supabase.from("topic_messages").insert(rows);
+      if (histErr) console.error("inbound-email: history backfill failed", histErr);
+      else console.log("inbound-email: backfilled history", { count: rows.length });
+    }
+
+    // The new content message.
+    const body = newContent || stripQuotedReply(text) || subject || "(no message)";
     await supabase
       .from("topic_messages")
       .insert({
         topic_id: topicId,
         author_profile_id: profile?.id ?? null,
-        body_text: stripped,
+        author_email: profile ? null : from.email,
+        author_name: profile ? null : from.name,
+        body_text: body,
         body_html: html || null,
         source: "email",
         email_id: inserted.id,
+        extracted: false,
         created_at: receivedAt,
       })
       .select("id")
       .maybeSingle();
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, topicId, autoCreated: topicAutoCreated });
 }
