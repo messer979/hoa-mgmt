@@ -143,6 +143,48 @@ function pickSubject(data: AnyObj): string {
   );
 }
 
+// Resend's inbound webhook payload is just an envelope — body text/html is
+// NOT included. Fetch it on demand using the email_id from the webhook.
+// We try a couple of likely API paths since Resend has shipped both shapes.
+async function fetchInboundBody(
+  emailId: string
+): Promise<{ text: string; html: string; raw: AnyObj } | null> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+
+  const urls = [
+    `https://api.resend.com/emails/${emailId}`,
+    `https://api.resend.com/inbound/emails/${emailId}`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+      });
+      console.log("inbound-email: GET", url, "→", res.status);
+      if (!res.ok) continue;
+      const json = (await res.json()) as AnyObj;
+      const text = pickBodyText(json);
+      const html = pickBodyHtml(json);
+      console.log("inbound-email: fetched body", {
+        url,
+        keys: Object.keys(json),
+        textLen: text.length,
+        htmlLen: html.length,
+      });
+      if (text || html) return { text, html, raw: json };
+    } catch (e) {
+      console.error("inbound-email: fetch failed", url, e);
+    }
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   const raw = await req.text();
@@ -173,8 +215,26 @@ export async function POST(req: NextRequest) {
   // acknowledged so Resend stops retrying.
   const data = (payload.data ?? {}) as AnyObj;
   const subject = pickSubject(data);
-  const text = pickBodyText(data);
-  const html = pickBodyHtml(data);
+  let text = pickBodyText(data);
+  let html = pickBodyHtml(data);
+  let fetchedRaw: AnyObj | null = null;
+
+  // Resend's inbound webhook envelope omits body content; fetch it on demand
+  // using the email_id from the payload.
+  const resendEmailId =
+    (typeof data.email_id === "string" && data.email_id) ||
+    (typeof data.id === "string" && data.id) ||
+    null;
+  if (!text && !html && resendEmailId) {
+    const fetched = await fetchInboundBody(resendEmailId);
+    if (fetched) {
+      text = fetched.text;
+      html = fetched.html;
+      fetchedRaw = fetched.raw;
+    } else {
+      console.warn("inbound-email: body fetch returned nothing", { resendEmailId });
+    }
+  }
 
   // Heuristic: process anything that looks like a parsed message. Otherwise
   // ack and skip non-message events (e.g. delivery notifications).
@@ -193,9 +253,11 @@ export async function POST(req: NextRequest) {
 
   console.log("inbound-email: extracted", {
     dataKeys: Object.keys(data),
+    resendEmailId,
     subjectLen: subject.length,
     textLen: text.length,
     htmlLen: html.length,
+    bodyFetched: !!fetchedRaw,
   });
 
   const from = pickAddress(data.from);
@@ -281,7 +343,7 @@ export async function POST(req: NextRequest) {
       in_reply_to: inReplyTo,
       references_ids: referencesIds.length ? referencesIds : null,
       is_outbound: false,
-      raw: payload as unknown as object,
+      raw: { envelope: payload, fetched: fetchedRaw } as unknown as object,
       received_at: receivedAt,
     })
     .select("id")
