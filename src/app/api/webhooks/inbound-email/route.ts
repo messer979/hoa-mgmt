@@ -682,8 +682,7 @@ export async function POST(req: NextRequest) {
           .from("topic_messages")
           .select("author_name,author_email,author_profile_id,body_text,created_at,original_date")
           .eq("topic_id", topicId)
-          .order("created_at", { ascending: true })
-          .limit(30);
+          .order("created_at", { ascending: true });
         // Hydrate profile names so the model has real names to attribute.
         const profileIds = Array.from(
           new Set(
@@ -713,12 +712,19 @@ export async function POST(req: NextRequest) {
         }));
       }
 
-      const analysis = await analyzeInboundEmail({
+      const { analysis, payload } = await analyzeInboundEmail({
         email: { from: from.email, subject: subject || null, body: text },
         currentTopic,
         thread: threadMessages,
         openTopics: openTopics ?? [],
       });
+
+      // Always persist the payload (even on error) so admins can see what
+      // the model actually received from /inbox/[id].
+      await supabase
+        .from("emails")
+        .update({ ai_input: payload as unknown as object })
+        .eq("id", inserted.id);
 
       if (analysis) {
         const finalTopicId = topicId ?? analysis.topic_id;

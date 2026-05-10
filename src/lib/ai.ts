@@ -1,7 +1,13 @@
-// OpenRouter wrapper for analyzing inbound emails. Returns a small,
-// structured JSON blob the webhook stores on the emails row + the inbox
-// page surfaces. Default model is Anthropic Claude Haiku 4.5 — fast, cheap,
-// strong at structured output. Override with OPENROUTER_MODEL env.
+// OpenRouter wrapper for analyzing inbound emails. Uses tool calling with a
+// strict JSON schema so the model's output shape is enforced rather than
+// hoped-for. Default model is Anthropic Claude Haiku 4.5.
+//
+// Schema (function "analyze_email" arguments):
+//   topic_id    : string | null   — uuid of the topic the email belongs to
+//   vote        : "affirm" | "reject" | "abstain" | "none"
+//   confidence  : number 0..1
+//   summary     : string          — one sentence
+//   reasoning   : string          — short paragraph explaining the choices
 
 const OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "anthropic/claude-haiku-4-5";
@@ -21,26 +27,23 @@ export type AnalysisInput = {
   openTopics: Array<{ id: string; title: string; description: string | null }>;
 };
 
-const SYSTEM_PROMPT = `You analyze inbound emails for a small HOA board management app. You'll be given:
-- The new inbound email (from, subject, body)
-- The current topic the email was auto-threaded to (if any) and its conversation history
-- All other open topics
+const SYSTEM_PROMPT = `You analyze inbound emails for a small HOA board management app.
+
+You'll receive a JSON payload with:
+- new_email: the incoming email (from, subject, body)
+- current_thread_topic: the topic the email was auto-threaded to (or null)
+- current_thread_messages: oldest→newest conversation history for that topic
+- other_open_topics: every other open topic the email could plausibly belong to
 
 Decide:
-1. Which topic does this email belong to (or null if none fits / it's starting a new topic)
-2. Is the sender casting a vote: "affirm", "reject", "abstain", or "none" (just discussing)
-3. Confidence (0 to 1)
-4. One-sentence summary
-5. Brief reasoning
-
-Return STRICT JSON with this exact schema and nothing else:
-{
-  "topic_id": "<uuid>" | null,
-  "vote": "affirm" | "reject" | "abstain" | "none",
-  "confidence": <number 0..1>,
-  "summary": "<one short sentence>",
-  "reasoning": "<one short paragraph>"
-}
+1. Which topic does the new email belong to? Use current_thread_topic.id
+   when the email genuinely continues that conversation. Use a different
+   topic.id from other_open_topics when the email better fits there.
+   Use null when none fit (the email starts a new topic).
+2. Is the sender casting a vote: "affirm", "reject", "abstain", or "none"?
+3. Confidence (0..1).
+4. One-sentence summary.
+5. Brief reasoning.
 
 Vote guidance:
 - "affirm" = supports the proposal (yes / approve / agree / in favor / aye)
@@ -48,34 +51,74 @@ Vote guidance:
 - "abstain" = explicitly abstains
 - "none" = just discussing, asking, providing context — no vote
 
-Be conservative. Use confidence >= 0.9 ONLY when the vote is unambiguous and the topic match is obvious. If the email is a question, request for info, or general comment, return vote="none".`;
+Be conservative. confidence >= 0.9 ONLY when the vote is unambiguous AND the
+topic match is obvious. If the email is a question, request for info, or
+general comment, return vote="none". If the email is the start of a brand
+new discussion not covered by any open topic, return topic_id=null.
+
+Call the analyze_email tool with your decision. Do not return any prose.`;
+
+const ANALYZE_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "analyze_email",
+    description: "Record the structured analysis of one inbound email.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["topic_id", "vote", "confidence", "summary", "reasoning"],
+      properties: {
+        topic_id: {
+          type: ["string", "null"],
+          description:
+            "uuid of the topic this email belongs to, or null if it starts a new topic",
+        },
+        vote: {
+          type: "string",
+          enum: ["affirm", "reject", "abstain", "none"],
+          description: "the sender's vote intent on the topic, or 'none'",
+        },
+        confidence: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description: "your confidence (0..1) in the topic + vote decisions",
+        },
+        summary: {
+          type: "string",
+          description: "one-sentence summary of what the sender is communicating",
+        },
+        reasoning: {
+          type: "string",
+          description: "brief explanation of why you chose this topic and vote",
+        },
+      },
+    },
+  },
+};
 
 export async function analyzeInboundEmail(
   input: AnalysisInput,
-): Promise<AIAnalysis | null> {
+): Promise<{ analysis: AIAnalysis | null; payload: AnalysisInput }> {
   const apiKey = process.env.OPENROUTER_API_KEY;
+  // Always return the payload we built so the caller can persist it for
+  // /inbox/[id] transparency, even when the call is skipped or fails.
   if (!apiKey) {
     console.warn("ai: OPENROUTER_API_KEY not set; skipping analysis");
-    return null;
+    return { analysis: null, payload: input };
   }
   const model = process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
 
-  // Trim body to keep token use sane. 8K chars covers a long email plus some
-  // quoted history; the parser already extracted the structured pieces.
-  const trimmedBody = input.email.body.length > 8000
-    ? input.email.body.slice(0, 8000) + "\n\n[truncated]"
-    : input.email.body;
-
-  const userContent = JSON.stringify(
-    {
-      new_email: { ...input.email, body: trimmedBody },
-      current_thread_topic: input.currentTopic,
-      current_thread_messages: input.thread.slice(-30), // cap at 30 most recent
-      other_open_topics: input.openTopics,
-    },
-    null,
-    2,
-  );
+  // Trim each body to keep token use predictable; cap thread at 100 to bound
+  // worst-case context size (HOA threads are small in practice).
+  const trimBody = (s: string) =>
+    s.length > 8000 ? s.slice(0, 8000) + "\n\n[truncated]" : s;
+  const trimmedInput: AnalysisInput = {
+    ...input,
+    email: { ...input.email, body: trimBody(input.email.body) },
+    thread: input.thread.slice(-100).map((m) => ({ ...m, body: trimBody(m.body) })),
+  };
+  const userContent = JSON.stringify(trimmedInput, null, 2);
 
   const start = Date.now();
   try {
@@ -93,29 +136,46 @@ export async function analyzeInboundEmail(
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userContent },
         ],
-        response_format: { type: "json_object" },
-        max_tokens: 600,
+        tools: [ANALYZE_TOOL],
+        tool_choice: {
+          type: "function",
+          function: { name: "analyze_email" },
+        },
         temperature: 0.1,
+        max_tokens: 600,
       }),
     });
 
     if (!res.ok) {
       const t = await res.text();
       console.error("ai: openrouter error", res.status, t.slice(0, 500));
-      return null;
+      return { analysis: null, payload: trimmedInput };
     }
 
     const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{
+        message?: {
+          tool_calls?: Array<{
+            function?: { name?: string; arguments?: string };
+          }>;
+          content?: string;
+        };
+      }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const content = json.choices?.[0]?.message?.content;
-    if (!content) {
-      console.error("ai: no content in response");
-      return null;
+
+    const toolCall = json.choices?.[0]?.message?.tool_calls?.[0];
+    let raw = toolCall?.function?.arguments;
+    if (!raw && json.choices?.[0]?.message?.content) {
+      // Some models drop tool_calls and reply with plain JSON; tolerate that.
+      raw = json.choices[0].message.content;
+    }
+    if (!raw) {
+      console.error("ai: no tool_call or content in response");
+      return { analysis: null, payload: trimmedInput };
     }
 
-    const parsed = JSON.parse(content) as Partial<AIAnalysis>;
+    const parsed = JSON.parse(raw) as Partial<AIAnalysis>;
     const analysis: AIAnalysis = {
       topic_id:
         typeof parsed.topic_id === "string" && parsed.topic_id !== "null"
@@ -141,10 +201,10 @@ export async function analyzeInboundEmail(
       confidence: analysis.confidence,
       tokens: json.usage,
     });
-    return analysis;
+    return { analysis, payload: trimmedInput };
   } catch (e) {
     console.error("ai: threw", e);
-    return null;
+    return { analysis: null, payload: trimmedInput };
   }
 }
 

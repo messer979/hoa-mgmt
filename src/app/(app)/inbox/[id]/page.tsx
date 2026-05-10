@@ -94,6 +94,16 @@ export default async function EmailDetail({
           {email.ai_reasoning && (
             <p className="text-xs text-muted mt-2">{email.ai_reasoning}</p>
           )}
+          {(email as { ai_input?: unknown }).ai_input ? (
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer text-muted">
+                View payload sent to model
+              </summary>
+              <pre className="mt-2 whitespace-pre-wrap text-xs bg-muted/10 p-2 rounded overflow-auto max-h-72">
+                {JSON.stringify((email as { ai_input?: unknown }).ai_input, null, 2)}
+              </pre>
+            </details>
+          ) : null}
           {email.ai_suggested_vote && email.ai_suggested_vote !== "none" && (
             <div className="mt-3 pt-3 border-t border-border flex items-center gap-3 flex-wrap">
               <span className="text-sm">
