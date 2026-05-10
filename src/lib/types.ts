@@ -49,6 +49,13 @@ export type EmailRow = {
   is_outbound: boolean;
   in_reply_to: string | null;
   references_ids: string[] | null;
+  ai_summary: string | null;
+  ai_suggested_vote: "affirm" | "reject" | "abstain" | "none" | null;
+  ai_suggested_topic_id: string | null;
+  ai_confidence: number | null;
+  ai_reasoning: string | null;
+  ai_model: string | null;
+  ai_processed_at: string | null;
   received_at: string;
 };
 

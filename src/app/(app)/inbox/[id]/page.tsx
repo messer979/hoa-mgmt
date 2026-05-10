@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { adminProxyVote } from "../../topics/actions";
 import {
+  applyAISuggestion,
   linkEmailToTopic,
   linkEmailToProfile,
   markProcessed,
@@ -75,6 +76,58 @@ export default async function EmailDetail({
           )}
         </div>
       </header>
+
+      {email.ai_processed_at && (
+        <section className="card border-l-4 border-l-violet-500">
+          <div className="flex items-center gap-2 mb-2">
+            <h2 className="font-medium">AI analysis</h2>
+            {email.ai_model && (
+              <span className="text-xs text-muted">{email.ai_model}</span>
+            )}
+            {typeof email.ai_confidence === "number" && (
+              <span className="badge text-xs">
+                {Math.round(email.ai_confidence * 100)}% confident
+              </span>
+            )}
+          </div>
+          {email.ai_summary && <p className="text-sm">{email.ai_summary}</p>}
+          {email.ai_reasoning && (
+            <p className="text-xs text-muted mt-2">{email.ai_reasoning}</p>
+          )}
+          {email.ai_suggested_vote && email.ai_suggested_vote !== "none" && (
+            <div className="mt-3 pt-3 border-t border-border flex items-center gap-3 flex-wrap">
+              <span className="text-sm">
+                Suggested vote:{" "}
+                <strong className={
+                  email.ai_suggested_vote === "affirm"
+                    ? "text-emerald-700"
+                    : email.ai_suggested_vote === "reject"
+                    ? "text-rose-700"
+                    : ""
+                }>
+                  {email.ai_suggested_vote}
+                </strong>
+              </span>
+              {email.processed ? (
+                <span className="badge text-emerald-700 border-emerald-600">
+                  applied
+                </span>
+              ) : matched ? (
+                <form action={applyAISuggestion}>
+                  <input type="hidden" name="id" value={email.id} />
+                  <button className="btn-primary !py-1 !text-sm">
+                    Apply suggestion
+                  </button>
+                </form>
+              ) : (
+                <span className="text-xs text-muted">
+                  Match the sender below to enable apply.
+                </span>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="card">
         <h2 className="font-medium mb-2">Message</h2>

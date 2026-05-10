@@ -3,6 +3,7 @@ import { Webhook } from "svix";
 import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase/server";
 import { htmlToText, parseQuotedHistory, stripQuotedReply } from "@/lib/text";
+import { aiModelInUse, analyzeInboundEmail } from "@/lib/ai";
 
 export const runtime = "nodejs";
 
@@ -660,6 +661,120 @@ export async function POST(req: NextRequest) {
       });
     } catch (e) {
       console.error("inbound-email: persistAttachments threw", e);
+    }
+  }
+
+  // AI analysis. Sync but best-effort — failures or missing key just skip.
+  if (inserted && process.env.OPENROUTER_API_KEY) {
+    try {
+      const { data: openTopics } = await supabase
+        .from("topics")
+        .select("id,title,description")
+        .eq("status", "open");
+
+      const currentTopic = topicId
+        ? (openTopics ?? []).find((t) => t.id === topicId) ?? null
+        : null;
+
+      let threadMessages: Array<{ author: string; body: string; date: string }> = [];
+      if (topicId) {
+        const { data: msgs } = await supabase
+          .from("topic_messages")
+          .select("author_name,author_email,author_profile_id,body_text,created_at,original_date")
+          .eq("topic_id", topicId)
+          .order("created_at", { ascending: true })
+          .limit(30);
+        // Hydrate profile names so the model has real names to attribute.
+        const profileIds = Array.from(
+          new Set(
+            (msgs ?? [])
+              .map((m) => m.author_profile_id)
+              .filter((x): x is string => !!x),
+          ),
+        );
+        const profileMap = new Map<string, string>();
+        if (profileIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("id,full_name,email")
+            .in("id", profileIds);
+          for (const p of profs ?? []) {
+            profileMap.set(p.id, p.full_name ?? p.email);
+          }
+        }
+        threadMessages = (msgs ?? []).map((m) => ({
+          author:
+            (m.author_profile_id && profileMap.get(m.author_profile_id)) ||
+            m.author_name ||
+            m.author_email ||
+            "Unknown",
+          body: m.body_text,
+          date: m.original_date ?? m.created_at,
+        }));
+      }
+
+      const analysis = await analyzeInboundEmail({
+        email: { from: from.email, subject: subject || null, body: text },
+        currentTopic,
+        thread: threadMessages,
+        openTopics: openTopics ?? [],
+      });
+
+      if (analysis) {
+        const finalTopicId = topicId ?? analysis.topic_id;
+
+        await supabase
+          .from("emails")
+          .update({
+            ai_summary: analysis.summary || null,
+            ai_suggested_vote: analysis.vote,
+            ai_suggested_topic_id: analysis.topic_id,
+            ai_confidence: analysis.confidence,
+            ai_reasoning: analysis.reasoning || null,
+            ai_model: aiModelInUse(),
+            ai_processed_at: new Date().toISOString(),
+          })
+          .eq("id", inserted.id);
+
+        // Auto-apply the vote when:
+        //  - confidence >= 0.9
+        //  - AI suggested an actual vote (not "none")
+        //  - sender is matched to a member (so we know who voted)
+        //  - we have a topic to attach the vote to
+        if (
+          analysis.confidence >= 0.9 &&
+          analysis.vote !== "none" &&
+          profile?.id &&
+          finalTopicId
+        ) {
+          const { error: voteErr } = await supabase.from("votes").upsert(
+            {
+              topic_id: finalTopicId,
+              voter_id: profile.id,
+              choice: analysis.vote,
+              source: "ai",
+              voted_by: null,
+              email_id: inserted.id,
+              notes: `AI (${Math.round(analysis.confidence * 100)}%): ${analysis.summary}`,
+            },
+            { onConflict: "topic_id,voter_id" },
+          );
+          if (voteErr) {
+            console.error("inbound-email: AI vote upsert failed", voteErr);
+          } else {
+            await supabase
+              .from("emails")
+              .update({ processed: true, topic_id: finalTopicId })
+              .eq("id", inserted.id);
+            console.log("inbound-email: AI auto-applied vote", {
+              vote: analysis.vote,
+              confidence: analysis.confidence,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("inbound-email: AI analysis threw", e);
     }
   }
 

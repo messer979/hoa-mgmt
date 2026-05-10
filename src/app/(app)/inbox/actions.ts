@@ -160,6 +160,55 @@ export async function reparseEmailHistory(formData: FormData) {
   revalidatePath(`/topics/${email.topic_id}`);
 }
 
+// Record the AI's suggested vote on behalf of the email's matched member.
+// Mirrors auto-apply but is admin-triggered (lower-confidence cases).
+export async function applyAISuggestion(formData: FormData) {
+  await requireAdmin();
+  const supabase = createAdminClient();
+  const id = String(formData.get("id"));
+
+  const { data: email } = await supabase
+    .from("emails")
+    .select(
+      "id,topic_id,matched_profile_id,ai_suggested_vote,ai_suggested_topic_id,ai_summary,ai_confidence",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (!email) throw new Error("Email not found");
+  if (!email.matched_profile_id) {
+    throw new Error("Sender isn't matched to a member; match them first.");
+  }
+  if (!email.ai_suggested_vote || email.ai_suggested_vote === "none") {
+    throw new Error("AI didn't suggest a vote for this email.");
+  }
+  const topic_id = email.topic_id ?? email.ai_suggested_topic_id;
+  if (!topic_id) {
+    throw new Error("No topic to vote on. Link the email to a topic first.");
+  }
+
+  const { error: voteErr } = await supabase.from("votes").upsert(
+    {
+      topic_id,
+      voter_id: email.matched_profile_id,
+      choice: email.ai_suggested_vote,
+      source: "ai",
+      voted_by: null,
+      email_id: id,
+      notes: `AI (${Math.round((email.ai_confidence ?? 0) * 100)}%): ${email.ai_summary ?? ""}`,
+    },
+    { onConflict: "topic_id,voter_id" },
+  );
+  if (voteErr) throw new Error(voteErr.message);
+
+  await supabase
+    .from("emails")
+    .update({ processed: true, topic_id })
+    .eq("id", id);
+
+  revalidatePath(`/inbox/${id}`);
+  revalidatePath(`/topics/${topic_id}`);
+}
+
 export async function markProcessed(formData: FormData) {
   await requireAdmin();
   const supabase = createAdminClient();
