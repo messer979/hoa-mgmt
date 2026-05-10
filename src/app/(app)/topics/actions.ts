@@ -267,3 +267,100 @@ export async function setTopicStatus(formData: FormData) {
   revalidatePath(`/topics/${id}`);
   revalidatePath("/topics");
 }
+
+export async function deleteTopic(formData: FormData) {
+  await requireAdmin();
+  const id = String(formData.get("id"));
+  if (!id) throw new Error("Missing topic id");
+
+  const supabase = createAdminClient();
+
+  // Detach inbound emails so they remain in the inbox archive but are no
+  // longer attributed to a deleted topic. (topic_messages cascades, votes
+  // cascade via FK; emails do not — preserving the audit trail.)
+  await supabase
+    .from("emails")
+    .update({ topic_id: null })
+    .eq("topic_id", id);
+
+  const { error } = await supabase.from("topics").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/topics");
+  revalidatePath("/inbox");
+  redirect("/topics");
+}
+
+// Move a single conversation message (and any underlying email) to a
+// different topic. Used to fix mis-threaded replies without dropping into
+// SQL — e.g. a reply on an old thread that was actually about a new topic.
+export async function moveMessage(formData: FormData) {
+  await requireAdmin();
+  const message_id = String(formData.get("message_id"));
+  const target_topic_id = String(formData.get("target_topic_id"));
+  if (!message_id || !target_topic_id) throw new Error("Missing fields");
+
+  const supabase = createAdminClient();
+
+  const { data: msg, error: getErr } = await supabase
+    .from("topic_messages")
+    .select("id,topic_id,email_id")
+    .eq("id", message_id)
+    .maybeSingle();
+  if (getErr) throw new Error(getErr.message);
+  if (!msg) throw new Error("Message not found");
+
+  const fromTopic = msg.topic_id;
+
+  const { error: msgErr } = await supabase
+    .from("topic_messages")
+    .update({ topic_id: target_topic_id })
+    .eq("id", message_id);
+  if (msgErr) throw new Error(msgErr.message);
+
+  // Keep the underlying email row in sync so future replies in this thread
+  // inherit the correct topic via the In-Reply-To walk.
+  if (msg.email_id) {
+    await supabase
+      .from("emails")
+      .update({ topic_id: target_topic_id })
+      .eq("id", msg.email_id);
+  }
+
+  revalidatePath(`/topics/${target_topic_id}`);
+  if (fromTopic) revalidatePath(`/topics/${fromTopic}`);
+  revalidatePath("/inbox");
+}
+
+export async function deleteMessage(formData: FormData) {
+  await requireAdmin();
+  const message_id = String(formData.get("message_id"));
+  if (!message_id) throw new Error("Missing message id");
+
+  const supabase = createAdminClient();
+  const { data: msg } = await supabase
+    .from("topic_messages")
+    .select("id,topic_id,email_id")
+    .eq("id", message_id)
+    .maybeSingle();
+  if (!msg) return;
+
+  // Delete the conversation row; if it was email-backed, detach the email
+  // (set topic_id null) so it returns to the inbox for re-routing rather
+  // than disappearing from the audit trail.
+  const { error } = await supabase
+    .from("topic_messages")
+    .delete()
+    .eq("id", message_id);
+  if (error) throw new Error(error.message);
+
+  if (msg.email_id) {
+    await supabase
+      .from("emails")
+      .update({ topic_id: null, processed: false })
+      .eq("id", msg.email_id);
+  }
+
+  if (msg.topic_id) revalidatePath(`/topics/${msg.topic_id}`);
+  revalidatePath("/inbox");
+}

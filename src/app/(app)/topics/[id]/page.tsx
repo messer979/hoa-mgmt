@@ -2,7 +2,16 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
-import { castVote, adminProxyVote, postReply, setTopicStatus } from "../actions";
+import {
+  castVote,
+  adminProxyVote,
+  postReply,
+  setTopicStatus,
+  deleteTopic,
+  deleteMessage,
+  moveMessage,
+} from "../actions";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Choice, Profile, TopicMessage } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +33,7 @@ export default async function TopicDetail({
     .maybeSingle();
   if (!topic) notFound();
 
-  const [{ data: profilesData }, { data: votesData }, { data: messagesData }] =
+  const [{ data: profilesData }, { data: votesData }, { data: messagesData }, { data: otherTopicsData }] =
     await Promise.all([
       supabase
         .from("profiles")
@@ -39,7 +48,15 @@ export default async function TopicDetail({
         .select("id,topic_id,author_profile_id,body_text,body_html,source,email_id,created_at")
         .eq("topic_id", id)
         .order("created_at", { ascending: true }),
+      isAdmin
+        ? supabase
+            .from("topics")
+            .select("id,title,status")
+            .neq("id", id)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [] as { id: string; title: string; status: string }[] }),
     ]);
+  const otherTopics = otherTopicsData ?? [];
 
   const profiles = (profilesData ?? []) as Pick<Profile, "id" | "full_name" | "email" | "unit_number" | "role">[];
   const votes = votesData ?? [];
@@ -157,6 +174,48 @@ export default async function TopicDetail({
                     <span>·</span>
                     <span>{new Date(m.created_at).toLocaleString()}</span>
                     <span className="badge">{m.source}</span>
+                    {isAdmin && (
+                      <span className="ml-auto flex items-center gap-1">
+                        {otherTopics.length > 0 && (
+                          <form action={moveMessage} className="flex items-center gap-1">
+                            <input type="hidden" name="message_id" value={m.id} />
+                            <select
+                              name="target_topic_id"
+                              className="input !py-0.5 !text-xs max-w-[10rem]"
+                              defaultValue=""
+                              required
+                            >
+                              <option value="" disabled>Move to…</option>
+                              {otherTopics.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.title}
+                                </option>
+                              ))}
+                            </select>
+                            <button className="btn !py-0.5 !text-xs">Move</button>
+                          </form>
+                        )}
+                        <ConfirmDialog
+                          triggerLabel="Delete"
+                          triggerClassName="btn !py-0.5 !text-xs text-rose-600 border-rose-600"
+                          title="Delete this message?"
+                          description={
+                            m.email_id ? (
+                              <span>
+                                The conversation entry will be removed. The original
+                                email stays in the inbox archive (detached from this
+                                topic) so you can re-route it if needed.
+                              </span>
+                            ) : (
+                              <span>This web post will be permanently removed.</span>
+                            )
+                          }
+                          confirmLabel="Delete message"
+                          hidden={{ message_id: m.id }}
+                          action={deleteMessage}
+                        />
+                      </span>
+                    )}
                   </div>
                   <p className="mt-1 whitespace-pre-wrap text-sm">{m.body_text}</p>
                 </div>
@@ -249,8 +308,8 @@ export default async function TopicDetail({
       </section>
 
       {isAdmin && (
-        <section className="card">
-          <h2 className="font-medium mb-3">Admin</h2>
+        <section className="card space-y-4">
+          <h2 className="font-medium">Admin</h2>
           <form action={setTopicStatus} className="flex items-center gap-2">
             <input type="hidden" name="id" value={topic.id} />
             <select name="status" defaultValue={topic.status} className="input w-40">
@@ -261,6 +320,28 @@ export default async function TopicDetail({
             </select>
             <button className="btn">Update status</button>
           </form>
+          <div className="border-t border-border pt-3 flex items-center justify-between">
+            <p className="text-xs text-muted">
+              Deleting removes this topic, all of its messages, and all votes.
+              Inbound emails are detached but kept in the inbox archive.
+            </p>
+            <ConfirmDialog
+              triggerLabel="Delete topic"
+              triggerClassName="btn-reject"
+              title={`Delete "${topic.title}"?`}
+              description={
+                <span>
+                  This permanently removes the topic, its discussion, and all
+                  recorded votes. Linked emails will be detached and remain in
+                  the inbox archive.
+                </span>
+              }
+              confirmLabel="Delete topic"
+              typeToConfirm={topic.title}
+              hidden={{ id: topic.id }}
+              action={deleteTopic}
+            />
+          </div>
         </section>
       )}
     </div>
