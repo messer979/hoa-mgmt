@@ -65,3 +65,14 @@ export type TopicMessage = {
   extracted: boolean;
   created_at: string;
 };
+
+export type Attachment = {
+  id: string;
+  email_id: string | null;
+  topic_id: string | null;
+  storage_path: string;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  received_at: string;
+};

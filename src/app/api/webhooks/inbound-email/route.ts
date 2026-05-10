@@ -191,6 +191,164 @@ async function fetchInboundBody(
   }
 }
 
+// Pull every attachment for an email out of Resend's receiving API, upload to
+// Supabase Storage, and insert metadata rows. Returns the inserted attachment
+// ids so we can log progress.
+type AttachmentMeta = { id?: string; filename?: string; content_type?: string };
+
+async function persistAttachments(args: {
+  emailId: string;
+  rowEmailId: string;
+  topicId: string | null;
+  fromEnvelope: AnyObj[];
+  fromFetched: AnyObj[];
+}): Promise<number> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return 0;
+
+  const resend = new Resend(apiKey);
+  const attApi = (resend.emails as unknown as {
+    receiving?: {
+      attachments?: {
+        get?: (
+          emailId: string,
+          attachmentId: string,
+        ) => Promise<{ data?: AnyObj | null; error?: unknown }>;
+        list?: (
+          emailId: string,
+        ) => Promise<{ data?: AnyObj | null; error?: unknown }>;
+      };
+    };
+  }).receiving?.attachments;
+
+  if (!attApi?.get) {
+    console.warn(
+      "inbound-email: receiving.attachments.get unavailable — upgrade resend SDK",
+    );
+    return 0;
+  }
+
+  // Reconcile attachment list: webhook envelope first, then receiving.get
+  // payload, finally fall back to attachments.list if both were empty but the
+  // email is known to have files.
+  const seen = new Map<string, AttachmentMeta>();
+  for (const a of [...args.fromEnvelope, ...args.fromFetched]) {
+    const id = String((a as AnyObj).id ?? "");
+    if (!id) continue;
+    if (!seen.has(id)) {
+      seen.set(id, {
+        id,
+        filename: typeof a.filename === "string" ? a.filename : undefined,
+        content_type:
+          typeof a.content_type === "string"
+            ? a.content_type
+            : typeof a.contentType === "string"
+            ? a.contentType
+            : undefined,
+      });
+    }
+  }
+
+  if (seen.size === 0 && attApi.list) {
+    try {
+      const listed = await attApi.list(args.emailId);
+      const items = (listed.data as { data?: AnyObj[] } | null)?.data ?? [];
+      for (const a of items) {
+        const id = String((a as AnyObj).id ?? "");
+        if (!id) continue;
+        seen.set(id, {
+          id,
+          filename: typeof a.filename === "string" ? a.filename : undefined,
+          content_type:
+            typeof a.content_type === "string" ? a.content_type : undefined,
+        });
+      }
+    } catch (e) {
+      console.error("inbound-email: attachments.list threw", e);
+    }
+  }
+
+  if (seen.size === 0) return 0;
+
+  console.log("inbound-email: attachments found", { count: seen.size });
+
+  const supabase = createAdminClient();
+  let saved = 0;
+
+  for (const meta of seen.values()) {
+    if (!meta.id) continue;
+    try {
+      const res = await attApi.get(args.emailId, meta.id);
+      if (res.error) {
+        console.error("inbound-email: attachment fetch error", res.error);
+        continue;
+      }
+      const d = (res.data ?? {}) as AnyObj;
+
+      // The SDK's content can show up in a few shapes; try them in order.
+      let buf: Buffer | null = null;
+      const content = d.content;
+      if (Buffer.isBuffer(content)) {
+        buf = content;
+      } else if (content instanceof Uint8Array) {
+        buf = Buffer.from(content);
+      } else if (typeof content === "string") {
+        // base64 by convention
+        buf = Buffer.from(content, "base64");
+      } else if (typeof d.content_url === "string" || typeof d.url === "string") {
+        const url = (d.content_url as string) ?? (d.url as string);
+        const r = await fetch(url, { cache: "no-store" });
+        if (r.ok) buf = Buffer.from(await r.arrayBuffer());
+      }
+
+      if (!buf) {
+        console.error("inbound-email: couldn't extract attachment content", {
+          attachmentId: meta.id,
+          keys: Object.keys(d),
+        });
+        continue;
+      }
+
+      const filename = (d.filename as string) ?? meta.filename ?? `${meta.id}.bin`;
+      const contentType =
+        (d.content_type as string) ?? meta.content_type ?? "application/octet-stream";
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const path = `${args.rowEmailId}/${meta.id}-${safeName}`;
+
+      const { error: upErr } = await supabase.storage
+        .from("email-attachments")
+        .upload(path, buf, {
+          contentType,
+          upsert: true,
+        });
+      if (upErr) {
+        console.error("inbound-email: storage upload failed", upErr);
+        continue;
+      }
+
+      const { error: insErr } = await supabase.from("attachments").insert({
+        email_id: args.rowEmailId,
+        topic_id: args.topicId,
+        storage_path: path,
+        filename,
+        content_type: contentType,
+        size_bytes: buf.byteLength,
+      });
+      if (insErr) {
+        console.error("inbound-email: attachments insert failed", insErr);
+        continue;
+      }
+
+      saved++;
+    } catch (e) {
+      console.error("inbound-email: attachment processing threw", e);
+    }
+  }
+
+  console.log("inbound-email: attachments saved", { saved, of: seen.size });
+  return saved;
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   const raw = await req.text();
@@ -478,6 +636,28 @@ export async function POST(req: NextRequest) {
       })
       .select("id")
       .maybeSingle();
+  }
+
+  // Persist any attachments. Best-effort: failures are logged but never
+  // poison the webhook response (Resend would retry indefinitely).
+  if (inserted && resendEmailId) {
+    const envelopeAtt = Array.isArray(data.attachments)
+      ? (data.attachments as AnyObj[])
+      : [];
+    const fetchedAtt = fetchedRaw && Array.isArray((fetchedRaw as AnyObj).attachments)
+      ? ((fetchedRaw as AnyObj).attachments as AnyObj[])
+      : [];
+    try {
+      await persistAttachments({
+        emailId: resendEmailId,
+        rowEmailId: inserted.id,
+        topicId,
+        fromEnvelope: envelopeAtt,
+        fromFetched: fetchedAtt,
+      });
+    } catch (e) {
+      console.error("inbound-email: persistAttachments threw", e);
+    }
   }
 
   return NextResponse.json({ ok: true, topicId, autoCreated: topicAutoCreated });

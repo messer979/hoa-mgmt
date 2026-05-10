@@ -33,32 +33,43 @@ export default async function TopicDetail({
     .maybeSingle();
   if (!topic) notFound();
 
-  const [{ data: profilesData }, { data: votesData }, { data: messagesData }, { data: otherTopicsData }] =
-    await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id,full_name,email,unit_number,role")
-        .order("full_name", { ascending: true }),
-      supabase
-        .from("votes")
-        .select("id,topic_id,voter_id,choice,source,voted_by,email_id,notes,created_at")
-        .eq("topic_id", id),
-      supabase
-        .from("topic_messages")
-        .select(
-          "id,topic_id,author_profile_id,author_email,author_name,body_text,body_html,source,email_id,extracted,created_at",
-        )
-        .eq("topic_id", id)
-        .order("created_at", { ascending: true }),
-      isAdmin
-        ? supabase
-            .from("topics")
-            .select("id,title,status")
-            .neq("id", id)
-            .order("created_at", { ascending: false })
-        : Promise.resolve({ data: [] as { id: string; title: string; status: string }[] }),
-    ]);
+  const [
+    { data: profilesData },
+    { data: votesData },
+    { data: messagesData },
+    { data: otherTopicsData },
+    { data: attachmentsData },
+  ] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id,full_name,email,unit_number,role")
+      .order("full_name", { ascending: true }),
+    supabase
+      .from("votes")
+      .select("id,topic_id,voter_id,choice,source,voted_by,email_id,notes,created_at")
+      .eq("topic_id", id),
+    supabase
+      .from("topic_messages")
+      .select(
+        "id,topic_id,author_profile_id,author_email,author_name,body_text,body_html,source,email_id,extracted,created_at",
+      )
+      .eq("topic_id", id)
+      .order("created_at", { ascending: true }),
+    isAdmin
+      ? supabase
+          .from("topics")
+          .select("id,title,status")
+          .neq("id", id)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] as { id: string; title: string; status: string }[] }),
+    supabase
+      .from("attachments")
+      .select("id,filename,content_type,size_bytes,received_at")
+      .eq("topic_id", id)
+      .order("received_at", { ascending: false }),
+  ]);
   const otherTopics = otherTopicsData ?? [];
+  const attachments = attachmentsData ?? [];
 
   const profiles = (profilesData ?? []) as Pick<Profile, "id" | "full_name" | "email" | "unit_number" | "role">[];
   const votes = votesData ?? [];
@@ -257,6 +268,36 @@ export default async function TopicDetail({
           </form>
         )}
       </section>
+
+      {attachments.length > 0 && (
+        <section className="card">
+          <h2 className="font-medium mb-3">Attachments ({attachments.length})</h2>
+          <ul className="divide-y divide-border">
+            {attachments.map((a) => (
+              <li key={a.id} className="py-2 flex items-center gap-3">
+                <a
+                  href={`/api/attachments/${a.id}/download`}
+                  className="text-sm hover:underline flex-1 truncate"
+                >
+                  {a.filename}
+                </a>
+                <span className="text-xs text-muted">
+                  {a.content_type ?? "unknown"}
+                  {a.size_bytes
+                    ? ` · ${
+                        a.size_bytes < 1024
+                          ? `${a.size_bytes} B`
+                          : a.size_bytes < 1024 * 1024
+                          ? `${(a.size_bytes / 1024).toFixed(1)} KB`
+                          : `${(a.size_bytes / 1024 / 1024).toFixed(1)} MB`
+                      }`
+                    : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="card">
         <div className="flex items-center justify-between mb-3">
