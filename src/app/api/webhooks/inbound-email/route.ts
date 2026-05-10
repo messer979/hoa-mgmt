@@ -54,6 +54,95 @@ function readReferences(data: AnyObj): string[] {
   return [];
 }
 
+function asString(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v) && v.length && typeof v[0] === "string") return v[0];
+  return "";
+}
+
+// Reach into nested objects to find a string at a path.
+function dig(obj: unknown, path: string[]): unknown {
+  let cur: unknown = obj;
+  for (const k of path) {
+    if (cur && typeof cur === "object" && k in (cur as AnyObj)) {
+      cur = (cur as AnyObj)[k];
+    } else {
+      return undefined;
+    }
+  }
+  return cur;
+}
+
+// Try a bunch of field shapes Resend / common email parsers have used.
+function pickBodyText(data: AnyObj): string {
+  const candidates: unknown[] = [
+    data.text,
+    data.bodyText,
+    data.body_text,
+    data.plainText,
+    dig(data, ["body", "text"]),
+    dig(data, ["body", "plain"]),
+    dig(data, ["email", "text"]),
+    dig(data, ["message", "text"]),
+    dig(data, ["parsed", "text"]),
+  ];
+
+  // Also scan an array of parts: { contentType: "text/plain", body | content }
+  const parts =
+    (Array.isArray(data.parts) && data.parts) ||
+    (Array.isArray(data.bodyParts) && data.bodyParts) ||
+    [];
+  for (const p of parts as AnyObj[]) {
+    const ct = String(p?.contentType ?? p?.content_type ?? p?.mimeType ?? "");
+    if (ct.toLowerCase().includes("text/plain")) {
+      candidates.push(p.body, p.content, p.text);
+    }
+  }
+
+  for (const c of candidates) {
+    const s = asString(c);
+    if (s.trim()) return s;
+  }
+  return "";
+}
+
+function pickBodyHtml(data: AnyObj): string {
+  const candidates: unknown[] = [
+    data.html,
+    data.bodyHtml,
+    data.body_html,
+    dig(data, ["body", "html"]),
+    dig(data, ["email", "html"]),
+    dig(data, ["message", "html"]),
+    dig(data, ["parsed", "html"]),
+  ];
+  const parts =
+    (Array.isArray(data.parts) && data.parts) ||
+    (Array.isArray(data.bodyParts) && data.bodyParts) ||
+    [];
+  for (const p of parts as AnyObj[]) {
+    const ct = String(p?.contentType ?? p?.content_type ?? p?.mimeType ?? "");
+    if (ct.toLowerCase().includes("text/html")) {
+      candidates.push(p.body, p.content, p.html);
+    }
+  }
+  for (const c of candidates) {
+    const s = asString(c);
+    if (s.trim()) return s;
+  }
+  return "";
+}
+
+function pickSubject(data: AnyObj): string {
+  return asString(
+    data.subject ??
+      dig(data, ["headers", "Subject"]) ??
+      dig(data, ["headers", "subject"]) ??
+      dig(data, ["email", "subject"]) ??
+      dig(data, ["message", "subject"])
+  );
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   const raw = await req.text();
@@ -83,25 +172,34 @@ export async function POST(req: NextRequest) {
   // actually carry a parsed message body — everything else is logged and
   // acknowledged so Resend stops retrying.
   const data = (payload.data ?? {}) as AnyObj;
+  const subject = pickSubject(data);
+  const text = pickBodyText(data);
+  const html = pickBodyHtml(data);
+
+  // Heuristic: process anything that looks like a parsed message. Otherwise
+  // ack and skip non-message events (e.g. delivery notifications).
   const looksLikeMessage =
     typeof data.from !== "undefined" &&
-    (typeof data.text !== "undefined" ||
-      typeof data.html !== "undefined" ||
-      typeof data.subject !== "undefined");
+    (subject.length > 0 || text.length > 0 || html.length > 0);
 
   if (!looksLikeMessage) {
     console.log("inbound-email: ignoring non-message event", {
       type: payload.type,
-      keys: Object.keys(data),
+      payloadKeys: Object.keys(payload),
+      dataKeys: Object.keys(data),
     });
     return NextResponse.json({ ok: true, ignored: payload.type ?? "unknown" });
   }
 
+  console.log("inbound-email: extracted", {
+    dataKeys: Object.keys(data),
+    subjectLen: subject.length,
+    textLen: text.length,
+    htmlLen: html.length,
+  });
+
   const from = pickAddress(data.from);
   const to = pickFirstAddress(data.to);
-  const subject = ((data.subject as string) ?? "").toString();
-  const text = ((data.text as string) ?? "").toString();
-  const html = ((data.html as string) ?? "").toString();
   const messageId = readHeader(data, "Message-ID", "messageId", "message_id");
   const inReplyTo = readHeader(data, "In-Reply-To", "inReplyTo", "in_reply_to");
   const referencesIds = readReferences(data);

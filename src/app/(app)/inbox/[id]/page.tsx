@@ -80,6 +80,24 @@ export default async function EmailDetail({
         <pre className="whitespace-pre-wrap text-sm leading-relaxed font-sans">
           {email.body_text || "(no plain text body)"}
         </pre>
+        {email.body_html && (
+          <details className="mt-3 text-xs">
+            <summary className="cursor-pointer text-muted">HTML body</summary>
+            <pre className="mt-2 whitespace-pre-wrap text-xs bg-muted/10 p-2 rounded overflow-auto max-h-64">
+              {email.body_html}
+            </pre>
+          </details>
+        )}
+        {email.raw && (
+          <details className="mt-3 text-xs">
+            <summary className="cursor-pointer text-muted">
+              Raw payload (debug)
+            </summary>
+            <pre className="mt-2 whitespace-pre-wrap text-xs bg-muted/10 p-2 rounded overflow-auto max-h-96">
+              {JSON.stringify(email.raw, null, 2)}
+            </pre>
+          </details>
+        )}
       </section>
 
       {!matched && (
