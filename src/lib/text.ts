@@ -46,10 +46,13 @@ function unwrapAttributions(text: string): string {
     .replace(/[ \t]+\n/g, "\n");
 }
 
-// "On <date>, <name> [<email>] wrote:" attribution (Gmail, Apple Mail, iOS).
-// Tolerant about whitespace and quote-prefix levels (>, >>, >>>).
-const ON_WROTE_RE =
-  /^[ \t>]*On\s+([^\n]{4,200}?)(?:[,]\s*|\s+)([^<\n]+?)?\s*(?:<([^>\n]+)>)?\s+wrote\s*:\s*$/gim;
+// "On <date>, <name> [<email>] wrote:" attribution. Two patterns: with-email
+// (anchored on <addr> so date can't bleed into the name capture) and
+// without-email (name is one or more capitalized words right before "wrote:").
+const ON_WROTE_WITH_EMAIL_RE =
+  /^[ \t>]*On\s+(.+?)[,\s]\s*([^<\n]*?)\s*<([^>\n]+)>\s+wrote\s*:\s*$/gim;
+const ON_WROTE_NO_EMAIL_RE =
+  /^[ \t>]*On\s+(.+?)[,\s]\s*([A-Z][\w'.\-]*(?:\s+[A-Z][\w'.\-]*){0,5})\s+wrote\s*:\s*$/gim;
 
 // "From: ... Sent|Date: ... [To: ...] [Cc: ...] [Subject: ...]" header block.
 // Outlook uses Sent; Apple/Gmail use Date. Subject/To/Cc are all optional —
@@ -116,13 +119,25 @@ export function parseQuotedHistory(
 
   const markers: Marker[] = [];
 
-  for (const m of src.matchAll(ON_WROTE_RE)) {
+  for (const m of src.matchAll(ON_WROTE_WITH_EMAIL_RE)) {
     if (m.index === undefined) continue;
     markers.push({
       index: m.index,
       length: m[0].length,
       author_name: (m[2] ?? "").trim() || null,
       author_email: (m[3] ?? "").trim().toLowerCase() || null,
+      date: parseDateLoose(m[1]),
+    });
+  }
+  for (const m of src.matchAll(ON_WROTE_NO_EMAIL_RE)) {
+    if (m.index === undefined) continue;
+    // Skip if a with-email match already covers this region.
+    if (markers.some((mk) => Math.abs(mk.index - m.index!) < 20)) continue;
+    markers.push({
+      index: m.index,
+      length: m[0].length,
+      author_name: (m[2] ?? "").trim() || null,
+      author_email: null,
       date: parseDateLoose(m[1]),
     });
   }
@@ -162,7 +177,7 @@ export function parseQuotedHistory(
     deduped.push(m);
   }
 
-  const newContent = stripQuotedReply(src.slice(0, deduped[0].index));
+  let newContent = stripQuotedReply(src.slice(0, deduped[0].index));
 
   const segments: QuotedSegment[] = [];
   for (let i = 0; i < deduped.length; i++) {
@@ -177,6 +192,17 @@ export function parseQuotedHistory(
       body,
       date: m.date,
     });
+  }
+
+  // Forward case: when the body opens with the wrapping marker (e.g. Gmail's
+  // "---------- Forwarded message ---------" header), there's nothing
+  // before it and segments[0] IS the forwarder's content. Promote it to
+  // newContent so the inbound webhook doesn't fall back to dumping the raw
+  // header block as the new message AND list the same author twice in the
+  // history (as both a segment and the forwarder).
+  if (!newContent.trim() && deduped[0].index < 50 && segments.length > 0) {
+    newContent = segments[0].body;
+    segments.shift();
   }
 
   // Quoted bodies stack newest-on-top; flip so callers can write
