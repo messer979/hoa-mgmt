@@ -212,11 +212,10 @@ async function persistAttachments(args: {
     receiving?: {
       attachments?: {
         get?: (
-          emailId: string,
-          attachmentId: string,
+          options: { emailId: string; id: string },
         ) => Promise<{ data?: AnyObj | null; error?: unknown }>;
         list?: (
-          emailId: string,
+          options: { emailId: string },
         ) => Promise<{ data?: AnyObj | null; error?: unknown }>;
       };
     };
@@ -252,7 +251,7 @@ async function persistAttachments(args: {
 
   if (seen.size === 0 && attApi.list) {
     try {
-      const listed = await attApi.list(args.emailId);
+      const listed = await attApi.list({ emailId: args.emailId });
       const items = (listed.data as { data?: AnyObj[] } | null)?.data ?? [];
       for (const a of items) {
         const id = String((a as AnyObj).id ?? "");
@@ -279,7 +278,7 @@ async function persistAttachments(args: {
   for (const meta of seen.values()) {
     if (!meta.id) continue;
     try {
-      const res = await attApi.get(args.emailId, meta.id);
+      const res = await attApi.get({ emailId: args.emailId, id: meta.id });
       if (res.error) {
         console.error("inbound-email: attachment fetch error", res.error);
         continue;
