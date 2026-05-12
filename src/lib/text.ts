@@ -46,13 +46,48 @@ function unwrapAttributions(text: string): string {
     .replace(/[ \t]+\n/g, "\n");
 }
 
-// "On <date>, <name> [<email>] wrote:" attribution. Two patterns: with-email
-// (anchored on <addr> so date can't bleed into the name capture) and
-// without-email (name is one or more capitalized words right before "wrote:").
+// "On <date>, <name> [<email>] wrote:" attribution. We anchor on either
+// "<addr>" or " wrote:" and split the captured prefix into date + name with
+// splitDateAndName (walks back from the right, taking pure-alphabetic words
+// as the name). This is much more reliable than trying to express the
+// date/name boundary in a single regex.
 const ON_WROTE_WITH_EMAIL_RE =
-  /^[ \t>]*On\s+(.+?)[,\s]\s*([^<\n]*?)\s*<([^>\n]+)>\s+wrote\s*:\s*$/gim;
+  /^[ \t>]*On\s+([^\n]+?)\s*<([^>\n]+)>\s+wrote\s*:\s*$/gim;
 const ON_WROTE_NO_EMAIL_RE =
-  /^[ \t>]*On\s+(.+?)[,\s]\s*([A-Z][\w'.\-]*(?:\s+[A-Z][\w'.\-]*){0,5})\s+wrote\s*:\s*$/gim;
+  /^[ \t>]*On\s+([^\n]+?)\s+wrote\s*:\s*$/gim;
+
+// Walk back from the right, taking alphabetic-only words as the name until
+// we hit a digit/punctuation word (date-y). Handles formats like:
+//   "Sat, May 11, 2026 at 4:00 PM Bob"            → date+"Bob"
+//   "May 11 Alice Johnson"                        → date+"Alice Johnson"
+//   "Bob Smith"            (no date)              → ""+"Bob Smith"
+//   "Sat, May 11, 2026 at 4:00 PM"  (no name)     → date+""
+function splitDateAndName(s: string | null | undefined): {
+  date: string;
+  name: string;
+} {
+  const trimmed = (s ?? "").trim();
+  if (!trimmed) return { date: "", name: "" };
+  const words = trimmed.split(/\s+/);
+  let nameStart = words.length;
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = words[i];
+    // A name word: pure letters / apostrophe / hyphen / period. Reject any
+    // word containing a digit or trailing comma, and reject AM/PM tokens.
+    if (
+      /^[A-Za-z][A-Za-z'.\-]*$/.test(w) &&
+      !/^(AM|PM|am|pm)$/.test(w)
+    ) {
+      nameStart = i;
+    } else {
+      break;
+    }
+  }
+  return {
+    date: words.slice(0, nameStart).join(" ").replace(/[,\s]+$/, ""),
+    name: words.slice(nameStart).join(" "),
+  };
+}
 
 // "From: ... Sent|Date: ... [To: ...] [Cc: ...] [Subject: ...]" header block.
 // Outlook uses Sent; Apple/Gmail use Date. Subject/To/Cc are all optional —
@@ -121,24 +156,26 @@ export function parseQuotedHistory(
 
   for (const m of src.matchAll(ON_WROTE_WITH_EMAIL_RE)) {
     if (m.index === undefined) continue;
+    const split = splitDateAndName(m[1]);
     markers.push({
       index: m.index,
       length: m[0].length,
-      author_name: (m[2] ?? "").trim() || null,
-      author_email: (m[3] ?? "").trim().toLowerCase() || null,
-      date: parseDateLoose(m[1]),
+      author_name: split.name || null,
+      author_email: (m[2] ?? "").trim().toLowerCase() || null,
+      date: parseDateLoose(split.date),
     });
   }
   for (const m of src.matchAll(ON_WROTE_NO_EMAIL_RE)) {
     if (m.index === undefined) continue;
     // Skip if a with-email match already covers this region.
     if (markers.some((mk) => Math.abs(mk.index - m.index!) < 20)) continue;
+    const split = splitDateAndName(m[1]);
     markers.push({
       index: m.index,
       length: m[0].length,
-      author_name: (m[2] ?? "").trim() || null,
+      author_name: split.name || null,
       author_email: null,
-      date: parseDateLoose(m[1]),
+      date: parseDateLoose(split.date),
     });
   }
   for (const m of src.matchAll(OUTLOOK_RE)) {

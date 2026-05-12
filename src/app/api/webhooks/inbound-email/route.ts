@@ -377,6 +377,21 @@ export async function POST(req: NextRequest) {
   // (inbound.received / inbound.email / similar). Only process events that
   // actually carry a parsed message body — everything else is logged and
   // acknowledged so Resend stops retrying.
+  // Resend's webhook fires for both inbound (email.received) and outbound
+  // delivery events (email.sent, email.delivered, email.bounced, etc.).
+  // We only handle inbound — every outbound event would otherwise create a
+  // spurious emails row, burn AI tokens, and pollute the inbox.
+  const eventType = typeof payload.type === "string" ? payload.type : "";
+  const isInboundEvent =
+    eventType === "email.received" ||
+    eventType === "inbound.received" ||
+    eventType.startsWith("inbound.");
+
+  if (!isInboundEvent) {
+    console.log("inbound-email: ignoring non-inbound event", { type: eventType });
+    return NextResponse.json({ ok: true, ignored: eventType });
+  }
+
   const data = (payload.data ?? {}) as AnyObj;
   const subject = pickSubject(data);
   let text = pickBodyText(data);
