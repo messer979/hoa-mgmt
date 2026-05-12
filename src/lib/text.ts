@@ -37,11 +37,17 @@ type Marker = {
   date: string | null;
 };
 
-// Long attribution lines often wrap before "wrote:". Pre-join them so the
-// single-line regex below can find every attribution. Also normalizes weird
-// whitespace from HTML-derived text.
+// Long attribution lines often wrap before "wrote:" or even mid `<addr>`.
+// Pre-join the common cases so the single-line regexes below find every
+// attribution. Also normalizes weird whitespace from HTML-derived text.
 function unwrapAttributions(text: string): string {
   return text
+    // Yahoo/Outlook style where the `<` sits at end-of-line and the email
+    // address (plus closing `>`) is on the next quote-prefixed line:
+    //     Nick Headley <
+    //     > headleyn@yahoo.com> wrote:
+    .replace(/<\s*\r?\n[ \t>]*([^>\n]+>)/g, "<$1")
+    // "<addr>\nwrote:" or "name\nwrote:"
     .replace(/(<[^>\n]+>|[A-Za-z][^\n<]*)\s*\r?\n[ \t>]*wrote\s*:/gi, "$1 wrote:")
     .replace(/[ \t]+\n/g, "\n");
 }
@@ -146,9 +152,20 @@ function readHeaders(block: string): {
 // Split a body into the new content + an oldest-first list of historical
 // segments parsed from the quoted-reply markers. Best-effort — falls through
 // to "no history" if the body doesn't contain recognizable markers.
+//
+// When the body opens with a wrapping forwarded-message header (Christopher
+// forwarded Lauren's reply), the "new content" is actually Lauren's body and
+// should be attributed to Lauren — not to the forwarder. We pass the
+// promoted segment's author + parsed date back through `newContentAuthor`
+// and `newContentDate` so the inbound webhook can credit the right person.
 export function parseQuotedHistory(
   text: string | null | undefined,
-): { newContent: string; history: QuotedSegment[] } {
+): {
+  newContent: string;
+  newContentAuthor: { name: string | null; email: string | null } | null;
+  newContentDate: string | null;
+  history: QuotedSegment[];
+} {
   if (!text) return { newContent: "", history: [] };
   const src = unwrapAttributions(text);
 
@@ -201,16 +218,29 @@ export function parseQuotedHistory(
   }
 
   if (markers.length === 0) {
-    return { newContent: stripQuotedReply(src), history: [] };
+    return {
+      newContent: stripQuotedReply(src),
+      newContentAuthor: null,
+      newContentDate: null,
+      history: [],
+    };
   }
 
-  // De-duplicate: when "Forwarded message" header sits right next to a
-  // matching "On X wrote:" line, both regexes match and we'd double-count.
+  // De-duplicate: drop a later marker only when it has the SAME author as
+  // its predecessor (catches the case where a "Forwarded message" header
+  // sits right above an "On X wrote:" line for the same person). Nested
+  // forwards from different people must NOT be deduped against each other.
   markers.sort((a, b) => a.index - b.index);
   const deduped: Marker[] = [];
   for (const m of markers) {
     const last = deduped[deduped.length - 1];
-    if (last && Math.abs(last.index - m.index) < 200) continue;
+    if (last) {
+      const close = m.index - last.index < 200;
+      const sameAuthor =
+        (m.author_email && m.author_email === last.author_email) ||
+        (m.author_name && m.author_name === last.author_name);
+      if (close && sameAuthor) continue;
+    }
     deduped.push(m);
   }
 
@@ -234,19 +264,27 @@ export function parseQuotedHistory(
   // Forward case: when the body opens with the wrapping marker (e.g. Gmail's
   // "---------- Forwarded message ---------" header), there's nothing
   // before it and segments[0] IS the forwarder's content. Promote it to
-  // newContent so the inbound webhook doesn't fall back to dumping the raw
-  // header block as the new message AND list the same author twice in the
-  // history (as both a segment and the forwarder).
+  // newContent and capture its author/date so the inbound webhook can
+  // attribute the resulting message to the original author rather than to
+  // whoever forwarded it.
+  let newContentAuthor: { name: string | null; email: string | null } | null =
+    null;
+  let newContentDate: string | null = null;
   if (!newContent.trim() && deduped[0].index < 50 && segments.length > 0) {
-    newContent = segments[0].body;
-    segments.shift();
+    const promoted = segments.shift()!;
+    newContent = promoted.body;
+    newContentAuthor = {
+      name: promoted.author_name,
+      email: promoted.author_email,
+    };
+    newContentDate = promoted.date;
   }
 
   // Quoted bodies stack newest-on-top; flip so callers can write
   // oldest-first conversation rows.
   segments.reverse();
 
-  return { newContent, history: segments };
+  return { newContent, newContentAuthor, newContentDate, history: segments };
 }
 
 // Strip the "On X wrote:" / "-----Original Message-----" tail and quoted (>)

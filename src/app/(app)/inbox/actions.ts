@@ -100,7 +100,8 @@ export async function reparseEmailHistory(formData: FormData) {
     .eq("extracted", true);
 
   const source = email.body_text || htmlToText(email.body_html);
-  const { newContent, history } = parseQuotedHistory(source);
+  const { newContent, newContentAuthor, newContentDate, history } =
+    parseQuotedHistory(source);
 
   // Backfill historical messages, oldest-first, with author lookup.
   if (history.length) {
@@ -137,21 +138,43 @@ export async function reparseEmailHistory(formData: FormData) {
     if (hErr) throw new Error(hErr.message);
   }
 
-  // Re-insert the email's own conversation row.
+  // Re-insert the email's own conversation row, crediting the promoted
+  // forwarded author when applicable.
   const body =
     newContent ||
     stripQuotedReply(source) ||
     source.trim() ||
     email.subject ||
     "(no message)";
+
+  let authorProfileId = email.matched_profile_id ?? null;
+  let authorEmail: string | null = null;
+  let authorName: string | null = null;
+  if (newContentAuthor?.email) {
+    const { data: matched } = await supabase
+      .from("profiles")
+      .select("id")
+      .ilike("email", newContentAuthor.email)
+      .maybeSingle();
+    authorProfileId = matched?.id ?? null;
+    authorEmail = matched ? null : newContentAuthor.email;
+    authorName = matched ? null : (newContentAuthor.name ?? null);
+  } else if (newContentAuthor?.name) {
+    authorProfileId = null;
+    authorName = newContentAuthor.name;
+  }
+
   const { error: mErr } = await supabase.from("topic_messages").insert({
     topic_id: email.topic_id,
-    author_profile_id: email.matched_profile_id ?? null,
+    author_profile_id: authorProfileId,
+    author_email: authorEmail,
+    author_name: authorName,
     body_text: body,
     body_html: email.body_html,
     source: "email",
     email_id: email.id,
     extracted: false,
+    original_date: newContentDate ? new Date(newContentDate).toISOString() : null,
     created_at: email.received_at,
   });
   if (mErr) throw new Error(mErr.message);

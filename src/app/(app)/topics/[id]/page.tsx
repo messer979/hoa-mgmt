@@ -10,6 +10,7 @@ import {
   deleteTopic,
   deleteMessage,
   moveMessage,
+  reparseTopicHistory,
 } from "../actions";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Choice, Profile, TopicMessage } from "@/lib/types";
@@ -379,6 +380,18 @@ export default async function TopicDetail({
               <option value="failed">Failed</option>
             </select>
             <button className="btn">Update status</button>
+          </form>
+          <form action={reparseTopicHistory} className="flex items-center gap-2">
+            <input type="hidden" name="topic_id" value={topic.id} />
+            <button
+              className="btn"
+              title="Re-walk every inbound email on this topic and rebuild the conversation from the latest parser."
+            >
+              Re-parse history
+            </button>
+            <span className="text-xs text-muted">
+              Rebuilds the discussion from the parser. Web replies are kept.
+            </span>
           </form>
           <div className="border-t border-border pt-3 flex items-center justify-between">
             <p className="text-xs text-muted">

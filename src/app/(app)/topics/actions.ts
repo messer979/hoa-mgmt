@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { requireAdmin, requireUser } from "@/lib/auth";
 import { sendTopicAnnouncement, sendThreadReply } from "@/lib/email";
 import { createAdminClient } from "@/lib/supabase/server";
+import { htmlToText, parseQuotedHistory, stripQuotedReply } from "@/lib/text";
 import type { Choice } from "@/lib/types";
 
 export async function createTopic(formData: FormData) {
@@ -345,6 +346,120 @@ export async function moveMessage(formData: FormData) {
   revalidatePath(`/topics/${target_topic_id}`);
   if (fromTopic) revalidatePath(`/topics/${fromTopic}`);
   revalidatePath("/inbox");
+}
+
+// Re-walk every inbound email on this topic and rebuild the conversation
+// rows from the latest parser. Useful after parser improvements without
+// needing to find each email in /inbox.
+export async function reparseTopicHistory(formData: FormData) {
+  await requireAdmin();
+  const topic_id = String(formData.get("topic_id"));
+  if (!topic_id) throw new Error("Missing topic id");
+
+  const supabase = createAdminClient();
+  // Clear extracted history + email-backed messages; web-posted (source=web)
+  // messages survive untouched.
+  await supabase
+    .from("topic_messages")
+    .delete()
+    .eq("topic_id", topic_id)
+    .eq("extracted", true);
+  await supabase
+    .from("topic_messages")
+    .delete()
+    .eq("topic_id", topic_id)
+    .eq("source", "email");
+
+  const { data: emails } = await supabase
+    .from("emails")
+    .select(
+      "id,topic_id,matched_profile_id,body_text,body_html,subject,received_at",
+    )
+    .eq("topic_id", topic_id)
+    .eq("is_outbound", false)
+    .order("received_at", { ascending: true });
+
+  for (const email of emails ?? []) {
+    const source = email.body_text || htmlToText(email.body_html);
+    const { newContent, newContentAuthor, newContentDate, history } =
+      parseQuotedHistory(source);
+
+    if (history.length) {
+      const emails = Array.from(
+        new Set(history.map((h) => h.author_email).filter((e): e is string => !!e)),
+      );
+      const profileByEmail = new Map<string, string>();
+      if (emails.length) {
+        const { data: matched } = await supabase
+          .from("profiles")
+          .select("id,email")
+          .in("email", emails);
+        for (const p of matched ?? []) {
+          if (p.email) profileByEmail.set(p.email.toLowerCase(), p.id);
+        }
+      }
+      const baseMs = new Date(email.received_at).getTime();
+      const rows = history.map((h, i) => ({
+        topic_id,
+        author_profile_id:
+          h.author_email
+            ? profileByEmail.get(h.author_email.toLowerCase()) ?? null
+            : null,
+        author_email: h.author_email,
+        author_name: h.author_name,
+        body_text: h.body || "(empty)",
+        body_html: null,
+        source: "email" as const,
+        email_id: null,
+        extracted: true,
+        original_date: h.date ? new Date(h.date).toISOString() : null,
+        created_at: new Date(baseMs - (history.length - i) * 1000).toISOString(),
+      }));
+      await supabase.from("topic_messages").insert(rows);
+    }
+
+    const body =
+      newContent ||
+      stripQuotedReply(source) ||
+      source.trim() ||
+      email.subject ||
+      "(no message)";
+
+    let authorProfileId = email.matched_profile_id ?? null;
+    let authorEmail: string | null = null;
+    let authorName: string | null = null;
+    if (newContentAuthor?.email) {
+      const { data: matched } = await supabase
+        .from("profiles")
+        .select("id")
+        .ilike("email", newContentAuthor.email)
+        .maybeSingle();
+      authorProfileId = matched?.id ?? null;
+      authorEmail = matched ? null : newContentAuthor.email;
+      authorName = matched ? null : (newContentAuthor.name ?? null);
+    } else if (newContentAuthor?.name) {
+      authorProfileId = null;
+      authorName = newContentAuthor.name;
+    }
+
+    await supabase.from("topic_messages").insert({
+      topic_id,
+      author_profile_id: authorProfileId,
+      author_email: authorEmail,
+      author_name: authorName,
+      body_text: body,
+      body_html: email.body_html,
+      source: "email",
+      email_id: email.id,
+      extracted: false,
+      original_date: newContentDate
+        ? new Date(newContentDate).toISOString()
+        : null,
+      created_at: email.received_at,
+    });
+  }
+
+  revalidatePath(`/topics/${topic_id}`);
 }
 
 export async function deleteMessage(formData: FormData) {

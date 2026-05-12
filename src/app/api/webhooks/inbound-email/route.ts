@@ -579,7 +579,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (topicId && inserted) {
-    const { newContent, history } = parseQuotedHistory(text);
+    const { newContent, newContentAuthor, newContentDate, history } =
+      parseQuotedHistory(text);
 
     // Backfill quoted history first, oldest-first, dated to "before received".
     if (topicAutoCreated && history.length) {
@@ -633,23 +634,50 @@ export async function POST(req: NextRequest) {
       text.trim() ||
       subject ||
       "(no message)";
+
+    // When newContent was promoted from a wrapping forwarded segment, the
+    // body is really the inner author's content. Look them up in the
+    // roster so attribution lands on the right person; otherwise keep
+    // their name/email on the row.
+    let authorProfileId = profile?.id ?? null;
+    let authorEmail = profile ? null : from.email;
+    let authorName = profile ? null : from.name;
+    if (newContentAuthor?.email) {
+      const { data: matched } = await supabase
+        .from("profiles")
+        .select("id")
+        .ilike("email", newContentAuthor.email)
+        .maybeSingle();
+      authorProfileId = matched?.id ?? null;
+      authorEmail = matched ? null : newContentAuthor.email;
+      authorName = matched ? null : (newContentAuthor.name ?? null);
+    } else if (newContentAuthor?.name) {
+      authorProfileId = null;
+      authorEmail = null;
+      authorName = newContentAuthor.name;
+    }
+
     console.log("inbound-email: conversation body", {
       newContentLen: newContent.length,
       historyCount: history.length,
       finalBodyLen: body.length,
+      promotedAuthor: newContentAuthor?.email ?? newContentAuthor?.name ?? null,
     });
     await supabase
       .from("topic_messages")
       .insert({
         topic_id: topicId,
-        author_profile_id: profile?.id ?? null,
-        author_email: profile ? null : from.email,
-        author_name: profile ? null : from.name,
+        author_profile_id: authorProfileId,
+        author_email: authorEmail,
+        author_name: authorName,
         body_text: body,
         body_html: html || null,
         source: "email",
         email_id: inserted.id,
         extracted: false,
+        original_date: newContentDate
+          ? new Date(newContentDate).toISOString()
+          : null,
         created_at: receivedAt,
       })
       .select("id")
