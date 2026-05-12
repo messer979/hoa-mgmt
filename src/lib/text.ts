@@ -166,7 +166,13 @@ export function parseQuotedHistory(
   newContentDate: string | null;
   history: QuotedSegment[];
 } {
-  if (!text) return { newContent: "", history: [] };
+  if (!text)
+    return {
+      newContent: "",
+      newContentAuthor: null,
+      newContentDate: null,
+      history: [],
+    };
   const src = unwrapAttributions(text);
 
   const markers: Marker[] = [];
