@@ -1,6 +1,6 @@
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
-import { addMember, updateMember, removeMember } from "./actions";
+import { addMember, resendInvite, updateMember, removeMember } from "./actions";
 import type { Profile } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -20,27 +20,35 @@ export default async function MembersPage() {
 
       <section className="card">
         <h2 className="font-medium mb-3">Add member</h2>
-        <form action={addMember} className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
-          <div className="md:col-span-2">
-            <label className="label" htmlFor="full_name">Full name</label>
-            <input id="full_name" name="full_name" className="input" required />
+        <form action={addMember} className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
+            <div className="md:col-span-2">
+              <label className="label" htmlFor="full_name">Full name</label>
+              <input id="full_name" name="full_name" className="input" required />
+            </div>
+            <div className="md:col-span-2">
+              <label className="label" htmlFor="email">Email</label>
+              <input id="email" name="email" type="email" className="input" required />
+            </div>
+            <div>
+              <label className="label" htmlFor="unit_number">Unit</label>
+              <input id="unit_number" name="unit_number" className="input" />
+            </div>
+            <div>
+              <label className="label" htmlFor="role">Role</label>
+              <select id="role" name="role" defaultValue="member" className="input">
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <button className="btn-primary md:col-span-1">Add</button>
           </div>
-          <div className="md:col-span-2">
-            <label className="label" htmlFor="email">Email</label>
-            <input id="email" name="email" type="email" className="input" required />
-          </div>
-          <div>
-            <label className="label" htmlFor="unit_number">Unit</label>
-            <input id="unit_number" name="unit_number" className="input" />
-          </div>
-          <div>
-            <label className="label" htmlFor="role">Role</label>
-            <select id="role" name="role" defaultValue="member" className="input">
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
-          <button className="btn-primary md:col-span-1">Add</button>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="send_invite" defaultChecked />
+            <span>
+              Send invite email with a sign-in link
+            </span>
+          </label>
         </form>
       </section>
 
@@ -74,10 +82,16 @@ export default async function MembersPage() {
                   <button className="btn">Save</button>
                 </div>
               </form>
-              <form action={removeMember} className="mt-2">
-                <input type="hidden" name="id" value={m.id} />
-                <button className="text-xs text-rose-600 hover:underline">Remove member</button>
-              </form>
+              <div className="mt-2 flex items-center gap-3">
+                <form action={resendInvite}>
+                  <input type="hidden" name="id" value={m.id} />
+                  <button className="text-xs hover:underline">Resend invite</button>
+                </form>
+                <form action={removeMember}>
+                  <input type="hidden" name="id" value={m.id} />
+                  <button className="text-xs text-rose-600 hover:underline">Remove member</button>
+                </form>
+              </div>
             </li>
           ))}
           {!members.length && <li className="text-sm text-muted py-3">No members yet.</li>}

@@ -147,6 +147,65 @@ function escapeHtml(s: string) {
     .replace(/"/g, "&quot;");
 }
 
+export async function sendInvite(args: {
+  to: string;
+  link: string;
+  recipientName: string | null;
+}): Promise<SendResult> {
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!from) throw new Error("RESEND_FROM_EMAIL not set");
+
+  const baseUrl = await getBaseUrl();
+  const greeting = args.recipientName ? `Hi ${args.recipientName},` : "Hi,";
+  const text = [
+    greeting,
+    "",
+    "You've been added to the HOA Board app — a small site for tracking discussions and votes that used to happen over email.",
+    "",
+    "Click below to sign in. This first link expires in 30 minutes, but you can always grab a new one at any time:",
+    "",
+    args.link,
+    "",
+    `Site: ${baseUrl}`,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: system-ui, -apple-system, sans-serif; line-height:1.5;">
+      <p>${escapeHtml(greeting)}</p>
+      <p>
+        You've been added to the HOA Board app — a small site for tracking
+        discussions and votes that used to happen over email.
+      </p>
+      <p>
+        Click below to sign in. This first link expires in 30 minutes, but you
+        can always grab a new one at any time.
+      </p>
+      <p>
+        <a href="${args.link}"
+           style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none;font-weight:500">
+          Sign in
+        </a>
+      </p>
+      <p style="color:#666;font-size:12px">
+        Or paste this URL: <a href="${args.link}">${escapeHtml(args.link)}</a>
+        <br/>
+        Site: <a href="${baseUrl}">${escapeHtml(baseUrl)}</a>
+      </p>
+    </div>
+  `;
+
+  const res = await client().emails.send({
+    from,
+    to: [args.to],
+    replyTo: replyTo(),
+    subject: "You're invited to the HOA board",
+    text,
+    html,
+  });
+  const rawId = res.data?.id ?? null;
+  return { rawId, messageId: normalizeMessageId(rawId) };
+}
+
 export async function sendMagicLink(args: {
   to: string;
   link: string;
