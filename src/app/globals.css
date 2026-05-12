@@ -30,3 +30,7 @@ html, body { background: rgb(var(--bg)); color: rgb(var(--fg)); }
 .input { @apply w-full rounded-md border border-border bg-bg px-3 py-2 text-sm; }
 .label { @apply block text-sm font-medium mb-1; }
 .badge { @apply inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs; }
+
+/* Hide the native disclosure triangle so <details>/<summary> can be styled as a button. */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }

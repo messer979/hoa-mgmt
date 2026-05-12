@@ -183,70 +183,108 @@ export default async function TopicDetail({
             {messages.map((m) => (
               <li key={m.id} className="flex gap-3">
                 <div
-                  className="mt-1 h-8 w-8 rounded-full bg-muted/20 grid place-items-center text-xs"
+                  className="mt-1 h-8 w-8 shrink-0 rounded-full bg-muted/20 grid place-items-center text-xs"
                   aria-hidden
                 >
                   {authorLabel(m).slice(0, 1).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 text-xs text-muted">
-                    <span className="font-medium text-fg">{authorLabel(m)}</span>
-                    <span>·</span>
-                    <span>
-                      {new Date(
-                        m.extracted && m.original_date
-                          ? m.original_date
-                          : m.created_at,
-                      ).toLocaleString()}
-                      {m.extracted && !m.original_date && " (date not parsed)"}
-                    </span>
-                    <span className="badge">{m.source}</span>
-                    {m.extracted && (
-                      <span className="badge text-amber-700 border-amber-600">
-                        from quoted history
-                      </span>
-                    )}
-                    {isAdmin && (
-                      <span className="ml-auto flex items-center gap-1">
-                        {otherTopics.length > 0 && (
-                          <form action={moveMessage} className="flex items-center gap-1">
-                            <input type="hidden" name="message_id" value={m.id} />
-                            <select
-                              name="target_topic_id"
-                              className="input !py-0.5 !text-xs max-w-[10rem]"
-                              defaultValue=""
-                              required
-                            >
-                              <option value="" disabled>Move to…</option>
-                              {otherTopics.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {t.title}
-                                </option>
-                              ))}
-                            </select>
-                            <button className="btn !py-0.5 !text-xs">Move</button>
-                          </form>
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-fg truncate">
+                        {authorLabel(m)}
+                      </div>
+                      <div className="text-xs text-muted flex items-center gap-1.5 flex-wrap">
+                        <span>
+                          {new Date(
+                            m.extracted && m.original_date
+                              ? m.original_date
+                              : m.created_at,
+                          ).toLocaleString()}
+                        </span>
+                        {m.source === "web" && (
+                          <span className="italic">· web reply</span>
                         )}
-                        <ConfirmDialog
-                          triggerLabel="Delete"
-                          triggerClassName="btn !py-0.5 !text-xs text-rose-600 border-rose-600"
-                          title="Delete this message?"
-                          description={
-                            m.email_id ? (
-                              <span>
-                                The conversation entry will be removed. The original
-                                email stays in the inbox archive (detached from this
-                                topic) so you can re-route it if needed.
-                              </span>
-                            ) : (
-                              <span>This web post will be permanently removed.</span>
-                            )
-                          }
-                          confirmLabel="Delete message"
-                          hidden={{ message_id: m.id }}
-                          action={deleteMessage}
-                        />
-                      </span>
+                        {m.extracted && (
+                          <span className="italic">
+                            · {m.original_date ? "from quoted history" : "from quote (date not parsed)"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {isAdmin && (
+                      <details className="shrink-0 relative">
+                        <summary
+                          className="cursor-pointer p-1.5 rounded-md border border-border hover:bg-muted/10"
+                          aria-label="Message actions"
+                          title="Message actions"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden
+                          >
+                            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                          </svg>
+                        </summary>
+                        <div className="absolute right-0 top-full mt-1 z-10 rounded-md border border-border bg-bg shadow-lg p-2 space-y-2 w-60">
+                          {otherTopics.length > 0 && (
+                            <form action={moveMessage} className="space-y-1">
+                              <label className="label !text-xs !mb-0.5">
+                                Move to topic
+                              </label>
+                              <input
+                                type="hidden"
+                                name="message_id"
+                                value={m.id}
+                              />
+                              <select
+                                name="target_topic_id"
+                                required
+                                defaultValue=""
+                                className="input !py-1 !text-xs w-full"
+                              >
+                                <option value="" disabled>Select a topic…</option>
+                                {otherTopics.map((t) => (
+                                  <option key={t.id} value={t.id}>{t.title}</option>
+                                ))}
+                              </select>
+                              <button className="btn !py-1 !text-xs w-full">
+                                Move
+                              </button>
+                            </form>
+                          )}
+                          <ConfirmDialog
+                            triggerLabel="Delete message"
+                            triggerClassName="btn !py-1 !text-xs text-rose-600 border-rose-600 w-full"
+                            title="Delete this message?"
+                            description={
+                              m.email_id ? (
+                                <span>
+                                  The conversation entry will be removed. The
+                                  original email stays in the inbox archive
+                                  (detached from this topic) so you can
+                                  re-route it if needed.
+                                </span>
+                              ) : (
+                                <span>
+                                  This web post will be permanently removed.
+                                </span>
+                              )
+                            }
+                            confirmLabel="Delete message"
+                            hidden={{ message_id: m.id }}
+                            action={deleteMessage}
+                          />
+                        </div>
+                      </details>
                     )}
                   </div>
                   <p className="mt-1 whitespace-pre-wrap text-sm">{m.body_text}</p>
