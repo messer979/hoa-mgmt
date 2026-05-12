@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
+import { uploadAttachment } from "../../attachments/actions";
 import {
   castVote,
   adminProxyVote,
@@ -277,9 +278,15 @@ export default async function TopicDetail({
         )}
       </section>
 
-      {attachments.length > 0 && (
-        <section className="card">
-          <h2 className="font-medium mb-3">Attachments ({attachments.length})</h2>
+      <section className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-medium">
+            Attachments
+            {attachments.length > 0 ? ` (${attachments.length})` : ""}
+          </h2>
+        </div>
+
+        {attachments.length > 0 ? (
           <ul className="divide-y divide-border">
             {attachments.map((a) => (
               <li key={a.id} className="py-2 flex items-center gap-3">
@@ -304,8 +311,29 @@ export default async function TopicDetail({
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        ) : (
+          <p className="text-sm text-muted">
+            No attachments yet. Upload one below, or forward an email with an
+            attachment to the inbox.
+          </p>
+        )}
+
+        <form
+          action={uploadAttachment}
+          encType="multipart/form-data"
+          className="flex items-center gap-2 border-t border-border pt-3"
+        >
+          <input type="hidden" name="topic_id" value={topic.id} />
+          <input
+            type="file"
+            name="file"
+            required
+            className="text-sm flex-1 file:btn file:mr-3"
+          />
+          <button className="btn-primary !py-1 !text-sm">Upload</button>
+        </form>
+        <p className="text-xs text-muted -mt-2">25 MB max per file.</p>
+      </section>
 
       <section className="card">
         <div className="flex items-center justify-between mb-3">

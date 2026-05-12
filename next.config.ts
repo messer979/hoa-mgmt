@@ -2,7 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   experimental: {
-    serverActions: { bodySizeLimit: "5mb" },
+    // 26mb leaves headroom over the 25mb storage cap on email-attachments
+    // so manual uploads near the limit don't 413 in the server action.
+    serverActions: { bodySizeLimit: "26mb" },
   },
 };
 
