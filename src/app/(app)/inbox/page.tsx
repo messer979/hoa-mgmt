@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { deleteEmail } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -49,10 +51,13 @@ export default async function InboxPage({
       ) : (
         <ul className="divide-y divide-border border border-border rounded-lg overflow-hidden">
           {emails!.map((e) => (
-            <li key={e.id}>
+            <li
+              key={e.id}
+              className="flex items-center gap-3 p-3 hover:bg-muted/10"
+            >
               <Link
                 href={`/inbox/${e.id}`}
-                className="flex items-center gap-3 p-3 hover:bg-muted/10"
+                className="flex-1 min-w-0 flex items-center gap-3"
               >
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">
@@ -74,6 +79,15 @@ export default async function InboxPage({
                   {new Date(e.received_at).toLocaleString()}
                 </span>
               </Link>
+              <ConfirmDialog
+                triggerLabel="Delete"
+                triggerClassName="btn !py-1 !text-xs text-rose-600 border-rose-600"
+                title={`Delete "${e.subject || "(no subject)"}"?`}
+                description="The email row and any conversation message it produced are removed. Attachments and votes already recorded from it stay, just unlinked. This can't be undone."
+                confirmLabel="Delete email"
+                hidden={{ id: e.id }}
+                action={deleteEmail}
+              />
             </li>
           ))}
         </ul>

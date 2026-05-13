@@ -2,9 +2,11 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { adminProxyVote } from "../../topics/actions";
 import {
   applyAISuggestion,
+  deleteEmail,
   linkEmailToTopic,
   linkEmailToProfile,
   markProcessed,
@@ -51,11 +53,24 @@ export default async function EmailDetail({
       <Link href="/inbox" className="text-sm text-muted hover:underline">← Inbox</Link>
 
       <header className="card">
-        <h1 className="text-lg font-semibold">{email.subject || "(no subject)"}</h1>
-        <div className="text-xs text-muted mt-1">
-          From {email.from_name ? `${email.from_name} <${email.from_email}>` : email.from_email}
-          {" · "}
-          {new Date(email.received_at).toLocaleString()}
+        <div className="flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold">{email.subject || "(no subject)"}</h1>
+            <div className="text-xs text-muted mt-1">
+              From {email.from_name ? `${email.from_name} <${email.from_email}>` : email.from_email}
+              {" · "}
+              {new Date(email.received_at).toLocaleString()}
+            </div>
+          </div>
+          <ConfirmDialog
+            triggerLabel="Delete"
+            triggerClassName="btn !py-1 !text-xs text-rose-600 border-rose-600"
+            title={`Delete "${email.subject || "(no subject)"}"?`}
+            description="The email row and any conversation message it produced are removed. Attachments and votes already recorded from it stay, just unlinked. This can't be undone."
+            confirmLabel="Delete email"
+            hidden={{ id: email.id, redirect_to: "/inbox" }}
+            action={deleteEmail}
+          />
         </div>
         <div className="mt-2 flex items-center gap-2 text-xs">
           {email.processed ? (

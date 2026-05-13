@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { htmlToText, parseQuotedHistory, stripQuotedReply } from "@/lib/text";
@@ -230,6 +231,29 @@ export async function applyAISuggestion(formData: FormData) {
 
   revalidatePath(`/inbox/${id}`);
   revalidatePath(`/topics/${topic_id}`);
+}
+
+export async function deleteEmail(formData: FormData) {
+  await requireAdmin();
+  const supabase = createAdminClient();
+  const id = String(formData.get("id"));
+  const redirectTo = String(formData.get("redirect_to") ?? "");
+
+  const { data: email } = await supabase
+    .from("emails")
+    .select("id,topic_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  // Drop any conversation rows we created from this email; the email's FK on
+  // attachments / votes is on-delete-set-null so those are preserved.
+  await supabase.from("topic_messages").delete().eq("email_id", id);
+  const { error } = await supabase.from("emails").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/inbox");
+  if (email?.topic_id) revalidatePath(`/topics/${email.topic_id}`);
+  if (redirectTo) redirect(redirectTo);
 }
 
 export async function markProcessed(formData: FormData) {
