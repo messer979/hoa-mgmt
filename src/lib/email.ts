@@ -85,6 +85,12 @@ export async function sendTopicAnnouncement(args: {
   return { rawId, messageId: normalizeMessageId(rawId) };
 }
 
+export type ThreadHistoryItem = {
+  author: string;
+  date: Date;
+  bodyText: string;
+};
+
 export async function sendThreadReply(args: {
   to: string[];
   topicId: string;
@@ -93,6 +99,8 @@ export async function sendThreadReply(args: {
   authorName: string | null;
   inReplyTo: string | null;
   references: string[];
+  /** Prior messages on this topic, newest-first, to quote as a Gmail-style history block. */
+  history?: ThreadHistoryItem[];
 }): Promise<SendResult> {
   const from = process.env.RESEND_FROM_EMAIL;
   if (!from) throw new Error("RESEND_FROM_EMAIL not set");
@@ -104,12 +112,37 @@ export async function sendThreadReply(args: {
     : `Re: ${args.topicTitle}`;
 
   const attribution = args.authorName ? `${args.authorName} wrote:` : "Someone wrote:";
+
+  const fmtDate = (d: Date) =>
+    d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+  const historyText = (args.history ?? [])
+    .map((h) => {
+      const quoted = (h.bodyText || "").split("\n").map((l) => "> " + l).join("\n");
+      return `On ${fmtDate(h.date)}, ${h.author} wrote:\n${quoted}`;
+    })
+    .join("\n\n");
+
+  const historyHtml = (args.history ?? [])
+    .map(
+      (h) =>
+        `<div style="margin-top:12px;color:#555;font-size:13px">` +
+        `<div>On ${escapeHtml(fmtDate(h.date))}, ${escapeHtml(h.author)} wrote:</div>` +
+        `<blockquote style="margin:6px 0 0 .8ex;border-left:1px solid #ccc;padding:0 0 0 1ex;color:#555;white-space:pre-wrap">` +
+        `${escapeHtml(h.bodyText || "")}` +
+        `</blockquote></div>`,
+    )
+    .join("");
+
   const text = [
     args.bodyText.trim(),
     "",
     "—",
     `${attribution} (via the board website — ${link})`,
-  ].join("\n");
+    historyText ? `\n${historyText}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const html = `
     <div style="font-family: system-ui, -apple-system, sans-serif; line-height:1.5;">
@@ -119,6 +152,7 @@ export async function sendThreadReply(args: {
         ${escapeHtml(attribution)}
         Sent via the board website — <a href="${link}">${link}</a>
       </p>
+      ${historyHtml}
     </div>
   `;
 

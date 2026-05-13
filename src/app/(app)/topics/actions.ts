@@ -161,6 +161,59 @@ export async function postReply(formData: FormData) {
           ...(anchor?.message_id ? [anchor.message_id] : []),
         ].filter((v, i, a) => v && a.indexOf(v) === i) as string[];
 
+        // Build a Gmail-style quoted history block from prior messages so the
+        // outbound email reads like a "reply all" rather than a context-free
+        // note. Newest-first below the new content matches what mail clients
+        // produce, and parseQuotedHistory can decode it on the round-trip back.
+        const { data: prior } = await supabase
+          .from("topic_messages")
+          .select(
+            "id,body_text,created_at,original_date,author_email,author_name,author_profile_id",
+          )
+          .eq("topic_id", topic_id)
+          .neq("id", msg.id)
+          .order("created_at", { ascending: false });
+
+        const authorIds = Array.from(
+          new Set(
+            (prior ?? [])
+              .map((p) => p.author_profile_id)
+              .filter((v): v is string => !!v),
+          ),
+        );
+        const profileById = new Map<
+          string,
+          { full_name: string | null; email: string }
+        >();
+        if (authorIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("id,full_name,email")
+            .in("id", authorIds);
+          for (const p of profs ?? []) {
+            profileById.set(p.id, { full_name: p.full_name, email: p.email });
+          }
+        }
+
+        const history = (prior ?? []).map((m) => {
+          let author = "Someone";
+          if (m.author_profile_id) {
+            const p = profileById.get(m.author_profile_id);
+            if (p) author = p.full_name ? `${p.full_name} <${p.email}>` : p.email;
+          } else if (m.author_email) {
+            author = m.author_name
+              ? `${m.author_name} <${m.author_email}>`
+              : m.author_email;
+          } else if (m.author_name) {
+            author = m.author_name;
+          }
+          return {
+            author,
+            date: new Date(m.original_date ?? m.created_at),
+            bodyText: m.body_text || "",
+          };
+        });
+
         const sent = await sendThreadReply({
           to: recipients,
           topicId: topic_id,
@@ -169,6 +222,7 @@ export async function postReply(formData: FormData) {
           authorName: me.full_name ?? me.email,
           inReplyTo,
           references,
+          history,
         });
         console.log("postReply: sent", { messageId: sent.messageId, rawId: sent.rawId });
 
