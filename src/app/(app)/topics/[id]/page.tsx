@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { uploadAttachment } from "../../attachments/actions";
+import { SubmitButton } from "@/components/submit-button";
 import {
   castVote,
   adminProxyVote,
@@ -368,7 +369,12 @@ export default async function TopicDetail({
             required
             className="text-sm flex-1 file:btn file:mr-3"
           />
-          <button className="btn-primary !py-1 !text-sm">Upload</button>
+          <SubmitButton
+            className="btn-primary !py-1 !text-sm"
+            pendingLabel="Uploading…"
+          >
+            Upload
+          </SubmitButton>
         </form>
         <p className="text-xs text-muted -mt-2">25 MB max per file.</p>
       </section>
