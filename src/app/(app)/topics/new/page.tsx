@@ -1,8 +1,8 @@
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createTopic } from "../actions";
 
 export default async function NewTopicPage() {
-  await requireAdmin();
+  await requireUser();
   return (
     <div className="max-w-xl space-y-4">
       <h1 className="text-xl font-semibold">New topic</h1>

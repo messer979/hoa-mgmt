@@ -45,7 +45,7 @@ export default async function TopicDetail({
   ] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id,full_name,email,unit_number,role")
+      .select("id,full_name,email,role")
       .order("full_name", { ascending: true }),
     supabase
       .from("votes")
@@ -74,7 +74,7 @@ export default async function TopicDetail({
   const otherTopics = otherTopicsData ?? [];
   const attachments = attachmentsData ?? [];
 
-  const profiles = (profilesData ?? []) as Pick<Profile, "id" | "full_name" | "email" | "unit_number" | "role">[];
+  const profiles = (profilesData ?? []) as Pick<Profile, "id" | "full_name" | "email" | "role">[];
   const votes = votesData ?? [];
   const messages = (messagesData ?? []) as TopicMessage[];
 
@@ -409,9 +409,7 @@ export default async function TopicDetail({
               <li key={p.id} className="py-2 flex items-center gap-3">
                 <div className="flex-1">
                   <div className="text-sm font-medium">{p.full_name ?? p.email}</div>
-                  <div className="text-xs text-muted">
-                    {p.email}{p.unit_number ? ` · Unit ${p.unit_number}` : ""}
-                  </div>
+                  <div className="text-xs text-muted">{p.email}</div>
                 </div>
                 <div className="text-sm">
                   {v ? (

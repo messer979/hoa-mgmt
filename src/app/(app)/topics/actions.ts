@@ -9,7 +9,7 @@ import { htmlToText, parseQuotedHistory, stripQuotedReply } from "@/lib/text";
 import type { Choice } from "@/lib/types";
 
 export async function createTopic(formData: FormData) {
-  const me = await requireAdmin();
+  const me = await requireUser();
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim() || null;

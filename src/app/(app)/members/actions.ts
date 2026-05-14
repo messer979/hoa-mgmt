@@ -10,7 +10,6 @@ export async function addMember(formData: FormData) {
   await requireAdmin();
   const full_name = String(formData.get("full_name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const unit_number = String(formData.get("unit_number") ?? "").trim() || null;
   const role = (formData.get("role") === "admin" ? "admin" : "member") as "admin" | "member";
   const shouldInvite = formData.get("send_invite") === "on";
   if (!full_name || !email) throw new Error("Name and email are required");
@@ -18,7 +17,7 @@ export async function addMember(formData: FormData) {
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("profiles")
-    .insert({ full_name, email, unit_number, role });
+    .insert({ full_name, email, role });
   if (error) throw new Error(error.message);
 
   if (shouldInvite) {
@@ -53,13 +52,12 @@ export async function updateMember(formData: FormData) {
   const id = String(formData.get("id"));
   const full_name = String(formData.get("full_name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const unit_number = String(formData.get("unit_number") ?? "").trim() || null;
   const role = (formData.get("role") === "admin" ? "admin" : "member") as "admin" | "member";
 
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("profiles")
-    .update({ full_name, email, unit_number, role })
+    .update({ full_name, email, role })
     .eq("id", id);
   if (error) throw new Error(error.message);
   revalidatePath("/members");

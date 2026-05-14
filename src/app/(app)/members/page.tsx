@@ -10,7 +10,7 @@ export default async function MembersPage() {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("profiles")
-    .select("id,email,full_name,unit_number,role,created_at")
+    .select("id,email,full_name,role,created_at")
     .order("full_name", { ascending: true });
   const members = (data ?? []) as Profile[];
 
@@ -29,10 +29,6 @@ export default async function MembersPage() {
             <div className="md:col-span-2">
               <label className="label" htmlFor="email">Email</label>
               <input id="email" name="email" type="email" className="input" required />
-            </div>
-            <div>
-              <label className="label" htmlFor="unit_number">Unit</label>
-              <input id="unit_number" name="unit_number" className="input" />
             </div>
             <div>
               <label className="label" htmlFor="role">Role</label>
@@ -57,7 +53,7 @@ export default async function MembersPage() {
         <ul className="divide-y divide-border">
           {members.map((m) => (
             <li key={m.id} className="py-3">
-              <form action={updateMember} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+              <form action={updateMember} className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
                 <input type="hidden" name="id" value={m.id} />
                 <div className="md:col-span-2">
                   <label className="label">Name</label>
@@ -68,17 +64,13 @@ export default async function MembersPage() {
                   <input name="email" type="email" defaultValue={m.email} className="input" />
                 </div>
                 <div>
-                  <label className="label">Unit</label>
-                  <input name="unit_number" defaultValue={m.unit_number ?? ""} className="input" />
-                </div>
-                <div>
                   <label className="label">Role</label>
                   <select name="role" defaultValue={m.role} className="input">
                     <option value="member">Member</option>
                     <option value="admin">Admin</option>
                   </select>
                 </div>
-                <div className="md:col-span-6 flex items-center gap-2">
+                <div className="md:col-span-5 flex items-center gap-2">
                   <button className="btn">Save</button>
                 </div>
               </form>

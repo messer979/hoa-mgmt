@@ -9,8 +9,7 @@ export default async function TopicsPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
-  const me = await requireUser();
-  const isAdmin = me.role === "admin";
+  await requireUser();
 
   const { q: rawQ } = await searchParams;
   const q = (rawQ ?? "").trim();
@@ -93,9 +92,7 @@ export default async function TopicsPage({
               </div>
             </form>
           </details>
-          {isAdmin && (
-            <Link href="/topics/new" className="btn-primary">New topic</Link>
-          )}
+          <Link href="/topics/new" className="btn-primary">New topic</Link>
         </div>
       </div>
 
@@ -116,7 +113,7 @@ export default async function TopicsPage({
         <p className="text-sm text-muted">
           {q
             ? "No topics match that filter."
-            : `No topics yet.${isAdmin ? " Create one to start a vote." : ""}`}
+            : "No topics yet. Create one to start a vote."}
         </p>
       ) : (
         <ul className="space-y-3">

@@ -20,10 +20,12 @@ create table if not exists public.profiles (
   id          uuid primary key default gen_random_uuid(),
   email       text not null unique,
   full_name   text,
-  unit_number text,
   role        text not null default 'member' check (role in ('admin','member')),
   created_at  timestamptz not null default now()
 );
+
+-- Drop the legacy unit_number column for installs that ran 0001..0008.
+alter table public.profiles drop column if exists unit_number;
 
 alter table public.profiles enable row level security;
 
