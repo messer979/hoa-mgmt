@@ -17,28 +17,43 @@ export default async function TopicsPage({
   const supabase = createAdminClient();
   let query = supabase
     .from("topics")
-    .select("id,title,description,status,closes_at,created_at")
-    .order("created_at", { ascending: false });
+    .select("id,title,description,status,closes_at,created_at");
   if (q) {
     // Escape % and , for the OR filter string; underscores are wildcards in
     // LIKE/ILIKE but harmless here. The OR pattern is supabase-js syntax.
     const safe = q.replace(/[%,]/g, " ");
     query = query.or(`title.ilike.%${safe}%,description.ilike.%${safe}%`);
   }
-  const { data: topics } = await query;
+  const { data: topicsRaw } = await query;
 
-  const ids = (topics ?? []).map((t) => t.id);
+  const ids = (topicsRaw ?? []).map((t) => t.id);
   const tallies: Record<string, { affirm: number; reject: number; abstain: number }> = {};
+  const lastActivity: Record<string, string> = {};
   if (ids.length) {
-    const { data: votes } = await supabase
-      .from("votes")
-      .select("topic_id,choice")
-      .in("topic_id", ids);
+    const [{ data: votes }, { data: msgs }] = await Promise.all([
+      supabase.from("votes").select("topic_id,choice").in("topic_id", ids),
+      supabase
+        .from("topic_messages")
+        .select("topic_id,created_at,original_date")
+        .in("topic_id", ids),
+    ]);
     for (const v of votes ?? []) {
       const t = (tallies[v.topic_id] ??= { affirm: 0, reject: 0, abstain: 0 });
       t[v.choice as "affirm" | "reject" | "abstain"]++;
     }
+    for (const m of msgs ?? []) {
+      const ts = m.original_date ?? m.created_at;
+      if (!ts) continue;
+      const cur = lastActivity[m.topic_id];
+      if (!cur || ts > cur) lastActivity[m.topic_id] = ts;
+    }
   }
+
+  const topics = (topicsRaw ?? []).slice().sort((a, b) => {
+    const ta = lastActivity[a.id] ?? a.created_at;
+    const tb = lastActivity[b.id] ?? b.created_at;
+    return tb.localeCompare(ta);
+  });
 
   return (
     <div className="space-y-4">
