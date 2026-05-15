@@ -92,7 +92,7 @@ export async function postReply(formData: FormData) {
 
   const topic_id = String(formData.get("topic_id"));
   const body = String(formData.get("body") ?? "").trim();
-  const fanOut = formData.get("fan_out") !== "off";
+  const fanOut = formData.get("fan_out") === "on";
   if (!topic_id || !body) throw new Error("Topic and message are required");
 
   const supabase = createAdminClient();
