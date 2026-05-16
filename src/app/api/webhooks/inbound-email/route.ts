@@ -484,7 +484,13 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   // Resolve topic by walking the thread first, then falling back to subject.
+  // When the thread points at an existing topic but the sender changed the
+  // subject, treat it as a fresh topic — board members often "reply all" to
+  // an old thread to start a new vote. Carrying over the old quoted history
+  // in that case would clutter the new topic with stale context.
   let topicId: string | null = null;
+  let subjectDivergedFromThread = false;
+  const cleanedSubject = (subject || "").replace(/^\s*(re|fw|fwd):\s*/i, "").trim();
   const ancestorIds = [inReplyTo, ...referencesIds].filter((x): x is string => !!x);
   if (ancestorIds.length) {
     const { data: parent } = await supabase
@@ -494,15 +500,32 @@ export async function POST(req: NextRequest) {
       .not("topic_id", "is", null)
       .limit(1)
       .maybeSingle();
-    if (parent?.topic_id) topicId = parent.topic_id;
+    if (parent?.topic_id) {
+      const { data: parentTopic } = await supabase
+        .from("topics")
+        .select("id,title")
+        .eq("id", parent.topic_id)
+        .maybeSingle();
+      const parentTitle = (parentTopic?.title ?? "").trim().toLowerCase();
+      const subjMatches =
+        !!cleanedSubject &&
+        !!parentTitle &&
+        cleanedSubject.toLowerCase() === parentTitle;
+      // Accept empty/missing subject as "same thread" — replies without a
+      // subject change still belong to the parent topic.
+      if (!cleanedSubject || subjMatches) {
+        topicId = parent.topic_id;
+      } else {
+        subjectDivergedFromThread = true;
+      }
+    }
   }
-  if (!topicId && subject) {
-    const cleaned = subject.replace(/^\s*(re|fw|fwd):\s*/i, "").trim();
-    if (cleaned) {
+  if (!topicId && !subjectDivergedFromThread && subject) {
+    if (cleanedSubject) {
       const { data: topic } = await supabase
         .from("topics")
         .select("id")
-        .ilike("title", cleaned)
+        .ilike("title", cleanedSubject)
         .maybeSingle();
       if (topic) topicId = topic.id;
     }
@@ -515,7 +538,6 @@ export async function POST(req: NextRequest) {
   // in /inbox for admin triage rather than spawning junk topics.
   let topicAutoCreated = false;
   if (!topicId && profile) {
-    const cleanedSubject = (subject || "").replace(/^\s*(re|fw|fwd):\s*/i, "").trim();
     const title = cleanedSubject || `(no subject) from ${from.email}`;
     const { data: newTopic, error: topicErr } = await supabase
       .from("topics")
@@ -539,7 +561,10 @@ export async function POST(req: NextRequest) {
     matchedProfile: profile?.id ?? null,
     topicId,
     autoCreated: topicAutoCreated,
-    via: ancestorIds.length
+    subjectDivergedFromThread,
+    via: subjectDivergedFromThread
+      ? "thread-diverged-new-subject"
+      : ancestorIds.length && !topicAutoCreated
       ? "thread-headers"
       : subject && !topicAutoCreated
       ? "subject-fallback"
@@ -583,7 +608,10 @@ export async function POST(req: NextRequest) {
       parseQuotedHistory(text);
 
     // Backfill quoted history first, oldest-first, dated to "before received".
-    if (topicAutoCreated && history.length) {
+    // Skip when the new topic was spawned because the sender changed the
+    // subject on an existing thread — the quoted text belongs to the prior
+    // topic and would be stale context here.
+    if (topicAutoCreated && !subjectDivergedFromThread && history.length) {
       // Try to map each historical author email to a profile in one round-trip.
       const emails = Array.from(
         new Set(history.map((h) => h.author_email).filter((e): e is string => !!e)),
