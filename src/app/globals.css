@@ -3,33 +3,94 @@
 @tailwind utilities;
 
 :root {
-  --bg: 250 250 249;
-  --fg: 24 24 27;
-  --muted: 113 113 122;
-  --border: 228 228 231;
-  --accent: 37 99 235;
+  /* Warm, mom-approved light-beige palette.
+     --bg is the page; --surface is a slightly deeper cream for cards so
+     they lift off the background without needing heavy borders. */
+  --bg: 250 244 233;        /* #FAF4E9 — soft cream */
+  --surface: 244 234 216;   /* #F4EAD8 — deeper cream */
+  --fg: 61 46 34;           /* #3D2E22 — warm espresso */
+  --muted: 138 120 103;     /* #8A7867 — dusty taupe */
+  --border: 224 208 179;    /* #E0D0B3 — sand */
+  --accent: 181 117 96;     /* #B57560 — terracotta */
+  --accent-fg: 255 249 240; /* #FFF9F0 — cream on terracotta */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: 12 12 14;
-    --fg: 244 244 245;
-    --muted: 161 161 170;
-    --border: 39 39 42;
-    --accent: 96 165 250;
+    /* Espresso-warm dark. Not black — kept the palette in the same
+       family so switching modes still feels cozy. */
+    --bg: 30 24 20;          /* #1E1814 */
+    --surface: 43 34 28;     /* #2B221C */
+    --fg: 244 234 216;       /* #F4EAD8 */
+    --muted: 168 148 128;    /* #A89480 */
+    --border: 66 52 42;      /* #42342A */
+    --accent: 209 143 118;   /* #D18F76 */
+    --accent-fg: 30 24 20;
   }
 }
 
-html, body { background: rgb(var(--bg)); color: rgb(var(--fg)); }
+html, body {
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
 
-.btn { @apply inline-flex items-center justify-center rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted/10 transition; }
-.btn-primary { @apply btn bg-accent text-white border-transparent hover:opacity-90; }
-.btn-affirm { @apply btn border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950; }
-.btn-reject { @apply btn border-rose-600 text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950; }
-.card { @apply rounded-lg border border-border bg-bg p-4; }
-.input { @apply w-full rounded-md border border-border bg-bg px-3 py-2 text-sm; }
+/* Serif headings for a warmer editorial feel. */
+h1, h2, h3 {
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  letter-spacing: -0.01em;
+}
+
+/* Subtle background texture — a very faint radial glow behind everything
+   so pages don't feel flat. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgb(var(--accent) / 0.08), transparent 60%),
+    radial-gradient(900px 500px at 100% 100%, rgb(var(--accent) / 0.06), transparent 55%);
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-xl border border-border
+         bg-bg/60 px-3 py-1.5 text-sm font-medium
+         hover:bg-surface hover:border-accent/40 transition;
+}
+.btn-primary {
+  @apply btn border-transparent;
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-fg));
+}
+.btn-primary:hover {
+  background: rgb(var(--accent) / 0.9);
+  border-color: transparent;
+}
+.btn-affirm { @apply btn border-emerald-700/40 text-emerald-800 hover:bg-emerald-50/70 dark:text-emerald-300 dark:hover:bg-emerald-950/40; }
+.btn-reject { @apply btn border-rose-700/40 text-rose-800 hover:bg-rose-50/70 dark:text-rose-300 dark:hover:bg-rose-950/40; }
+
+.card {
+  @apply rounded-2xl border border-border p-5;
+  background: rgb(var(--surface));
+  box-shadow: 0 1px 2px rgb(var(--fg) / 0.04), 0 8px 24px -12px rgb(var(--fg) / 0.08);
+}
+
+.input {
+  @apply w-full rounded-xl border border-border px-3 py-2 text-sm
+         focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20;
+  background: rgb(var(--bg));
+}
+
 .label { @apply block text-sm font-medium mb-1; }
-.badge { @apply inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs; }
+
+.badge {
+  @apply inline-flex items-center rounded-full border border-border
+         px-2.5 py-0.5 text-xs;
+  background: rgb(var(--bg));
+}
 
 /* Hide the native disclosure triangle so <details>/<summary> can be styled as a button. */
 details > summary { list-style: none; }
