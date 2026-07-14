@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SubmitButton } from "@/components/submit-button";
+import { canViewInline } from "@/lib/attachments";
 import type { Attachment } from "@/lib/types";
 import {
   assignAttachmentToTopic,
@@ -120,6 +121,17 @@ export default async function AttachmentsPage() {
                     {new Date(a.received_at).toLocaleString()}
                   </div>
                 </div>
+
+                {canViewInline(a.content_type) && (
+                  <a
+                    href={`/api/attachments/${a.id}/view`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn !py-1 !text-xs"
+                  >
+                    View
+                  </a>
+                )}
 
                 {a.topic_id ? (
                   <Link

@@ -73,6 +73,17 @@ export type TopicMessage = {
   created_at: string;
 };
 
+export type Event = {
+  id: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
 export type Attachment = {
   id: string;
   email_id: string | null;

@@ -201,3 +201,20 @@ create index if not exists attachments_email_idx    on public.attachments(email_
 create index if not exists attachments_received_idx on public.attachments(received_at desc);
 
 alter table public.attachments enable row level security;
+
+-- ============================================================
+-- events — calendar log (migration 0010)
+-- ============================================================
+create table if not exists public.events (
+  id          uuid primary key default gen_random_uuid(),
+  title       text not null,
+  description text,
+  location    text,
+  starts_at   timestamptz not null,
+  ends_at     timestamptz,
+  created_by  uuid references public.profiles(id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists events_starts_at_idx on public.events(starts_at);
+
+alter table public.events enable row level security;

@@ -12,6 +12,7 @@ export async function Nav() {
         <Link href="/topics" className="font-semibold">HOA Board</Link>
         <nav className="flex items-center gap-3 text-sm">
           <Link href="/topics" className="hover:underline">Topics</Link>
+          <Link href="/calendar" className="hover:underline">Calendar</Link>
           <Link href="/attachments" className="hover:underline">Attachments</Link>
           {isAdmin && <Link href="/inbox" className="hover:underline">Inbox</Link>}
           {isAdmin && <Link href="/members" className="hover:underline">Members</Link>}

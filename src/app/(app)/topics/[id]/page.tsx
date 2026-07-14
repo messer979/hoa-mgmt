@@ -15,6 +15,7 @@ import {
   reparseTopicHistory,
 } from "../actions";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { canViewInline } from "@/lib/attachments";
 import type { Choice, Profile, TopicMessage } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -347,6 +348,16 @@ export default async function TopicDetail({
                       }`
                     : ""}
                 </span>
+                {canViewInline(a.content_type) && (
+                  <a
+                    href={`/api/attachments/${a.id}/view`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn !py-1 !text-xs"
+                  >
+                    View
+                  </a>
+                )}
               </li>
             ))}
           </ul>
