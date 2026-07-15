@@ -7,11 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx src/lib/migrate-cli.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "next": "^15.5.15",
+    "pg": "^8.13.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "resend": "^6.12.3",
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/pg": "^8.11.10",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.20",
@@ -26,6 +29,7 @@
     "eslint-config-next": "^15.5.15",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",
+    "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
 }
