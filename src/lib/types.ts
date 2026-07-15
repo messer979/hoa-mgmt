@@ -94,3 +94,15 @@ export type Attachment = {
   size_bytes: number | null;
   received_at: string;
 };
+
+export type Document = {
+  id: string;
+  title: string | null;
+  description: string | null;
+  storage_path: string;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  created_at: string;
+};

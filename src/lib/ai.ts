@@ -211,3 +211,147 @@ export async function analyzeInboundEmail(
 export function aiModelInUse(): string {
   return process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
 }
+
+// ---------- Event parsing ----------
+
+export type ProposedEvent = {
+  title: string;
+  starts_at: string;         // ISO 8601 with offset
+  ends_at: string | null;
+  location: string | null;
+  description: string | null;
+};
+
+const EVENT_SYSTEM_PROMPT = `You extract structured calendar events from free-form text pasted by a user of an HOA management app.
+
+The user will paste a list of dates, times, and event names — usually one per line, but the format varies. Turn each into a structured event.
+
+Rules:
+- title: short, descriptive. If the line is just "3pm meeting", infer "Meeting".
+- starts_at: ISO 8601 with the user's local timezone offset. The user's timezone is provided in the payload — use it. If no time is given, default to 09:00 local.
+- ends_at: only if the user explicitly gives an end time or duration. Otherwise null.
+- location: only if the user explicitly names one. Otherwise null.
+- description: only if the user includes extra context beyond title/time/place. Otherwise null.
+- If a year isn't given, assume the current year (also in the payload). If the resulting date would be in the past, roll forward one year.
+- Return every event you can identify. If the text has no events, return an empty array.
+
+Call the extract_events tool with your list. No prose.`;
+
+const EXTRACT_EVENTS_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "extract_events",
+    description: "Record the parsed calendar events.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["events"],
+      properties: {
+        events: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["title", "starts_at", "ends_at", "location", "description"],
+            properties: {
+              title: { type: "string" },
+              starts_at: {
+                type: "string",
+                description: "ISO 8601 with timezone offset, e.g. 2026-07-20T18:00:00-04:00",
+              },
+              ends_at: { type: ["string", "null"] },
+              location: { type: ["string", "null"] },
+              description: { type: ["string", "null"] },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+export async function parseEventsFromText(
+  text: string,
+  ctx: { timezone: string; nowIso: string },
+): Promise<ProposedEvent[]> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("AI is not configured (OPENROUTER_API_KEY missing)");
+  const model = process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
+
+  const trimmed = text.length > 8000 ? text.slice(0, 8000) + "\n[truncated]" : text;
+  const payload = { text: trimmed, timezone: ctx.timezone, now: ctx.nowIso };
+
+  const res = await fetch(OPENROUTER_API, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL ?? "https://hoa-mgmt",
+      "X-Title": "HOA Board App",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: EVENT_SYSTEM_PROMPT },
+        { role: "user", content: JSON.stringify(payload, null, 2) },
+      ],
+      tools: [EXTRACT_EVENTS_TOOL],
+      tool_choice: {
+        type: "function",
+        function: { name: "extract_events" },
+      },
+      temperature: 0.1,
+      max_tokens: 1500,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error("ai: openrouter error", res.status, body.slice(0, 500));
+    throw new Error(`AI request failed (${res.status})`);
+  }
+
+  const json = (await res.json()) as {
+    choices?: Array<{
+      message?: {
+        tool_calls?: Array<{
+          function?: { name?: string; arguments?: string };
+        }>;
+        content?: string;
+      };
+    }>;
+  };
+  const raw =
+    json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments ??
+    json.choices?.[0]?.message?.content ??
+    "";
+  if (!raw) throw new Error("AI returned no output");
+
+  let parsed: { events?: unknown };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("AI output was not valid JSON");
+  }
+  const items = Array.isArray(parsed.events) ? parsed.events : [];
+
+  const out: ProposedEvent[] = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object") continue;
+    const rec = it as Record<string, unknown>;
+    const title = typeof rec.title === "string" ? rec.title.trim() : "";
+    const starts = typeof rec.starts_at === "string" ? rec.starts_at : "";
+    if (!title || !starts) continue;
+    if (Number.isNaN(new Date(starts).getTime())) continue;
+    const ends = typeof rec.ends_at === "string" ? rec.ends_at : null;
+    if (ends && Number.isNaN(new Date(ends).getTime())) continue;
+    out.push({
+      title,
+      starts_at: starts,
+      ends_at: ends,
+      location: typeof rec.location === "string" ? rec.location : null,
+      description: typeof rec.description === "string" ? rec.description : null,
+    });
+  }
+  return out;
+}

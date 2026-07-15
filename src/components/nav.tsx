@@ -19,6 +19,7 @@ export async function Nav() {
         <nav className="flex items-center gap-4 text-sm">
           <Link href="/topics" className="hover:text-accent transition-colors">Topics</Link>
           <Link href="/calendar" className="hover:text-accent transition-colors">Calendar</Link>
+          <Link href="/documents" className="hover:text-accent transition-colors">Documents</Link>
           <Link href="/attachments" className="hover:text-accent transition-colors">Attachments</Link>
           {isAdmin && <Link href="/inbox" className="hover:text-accent transition-colors">Inbox</Link>}
           {isAdmin && <Link href="/members" className="hover:text-accent transition-colors">Members</Link>}
