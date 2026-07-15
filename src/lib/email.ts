@@ -41,7 +41,8 @@ export async function sendTopicAnnouncement(args: {
   to: string[];
   topicId: string;
   title: string;
-  description: string | null;
+  descriptionHtml: string | null;
+  descriptionText: string | null;
   closesAt: string | null;
 }): Promise<SendResult> {
   const from = process.env.RESEND_FROM_EMAIL;
@@ -53,7 +54,7 @@ export async function sendTopicAnnouncement(args: {
   const text = [
     `New vote: ${args.title}`,
     "",
-    args.description ?? "",
+    args.descriptionText ?? "",
     "",
     `Reply YES / NO / ABSTAIN to record your vote, or open ${link}`,
     args.closesAt ? `Closes ${new Date(args.closesAt).toLocaleString()}` : "",
@@ -64,7 +65,7 @@ export async function sendTopicAnnouncement(args: {
   const html = `
     <div style="font-family: system-ui, -apple-system, sans-serif; line-height:1.5;">
       <h2 style="margin:0 0 8px">${escapeHtml(args.title)}</h2>
-      ${args.description ? `<p style="white-space:pre-wrap">${escapeHtml(args.description)}</p>` : ""}
+      ${args.descriptionHtml ? `<div>${args.descriptionHtml}</div>` : ""}
       <p>
         Reply <b>YES</b> / <b>NO</b> / <b>ABSTAIN</b> to record your vote,
         or <a href="${link}">open the topic</a>.

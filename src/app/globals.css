@@ -95,3 +95,34 @@ body::before {
 /* Hide the native disclosure triangle so <details>/<summary> can be styled as a button. */
 details > summary { list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
+
+/* Rich-text content — used by the TipTap editor and by rendered topic
+   descriptions. Kept small: matches the app's serif headings, warm
+   accent-tinted links, and modest spacing. */
+.prose-editor, .rich-text {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.prose-editor h2, .rich-text h2 {
+  font-family: ui-serif, Georgia, serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.25rem;
+}
+.prose-editor h3, .rich-text h3 {
+  font-family: ui-serif, Georgia, serif;
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem;
+}
+.prose-editor p, .rich-text p { margin: 0.35rem 0; }
+.prose-editor ul, .rich-text ul { list-style: disc; padding-left: 1.4rem; margin: 0.35rem 0; }
+.prose-editor ol, .rich-text ol { list-style: decimal; padding-left: 1.4rem; margin: 0.35rem 0; }
+.prose-editor blockquote, .rich-text blockquote {
+  border-left: 3px solid rgb(var(--accent) / 0.5);
+  padding-left: 0.75rem;
+  color: rgb(var(--muted));
+  margin: 0.5rem 0;
+}
+.prose-editor a, .rich-text a { color: rgb(var(--accent)); text-decoration: underline; }
+.prose-editor strong, .rich-text strong { font-weight: 600; }

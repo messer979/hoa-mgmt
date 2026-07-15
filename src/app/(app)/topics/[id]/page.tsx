@@ -132,7 +132,10 @@ export default async function TopicDetail({
           )}
         </div>
         {topic.description && (
-          <p className="mt-3 whitespace-pre-wrap text-sm">{topic.description}</p>
+          <div
+            className="rich-text mt-3"
+            dangerouslySetInnerHTML={{ __html: topic.description }}
+          />
         )}
       </div>
 

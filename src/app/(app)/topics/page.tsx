@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
+import { htmlToText } from "@/lib/text";
 
 export const dynamic = "force-dynamic";
 
@@ -142,7 +143,9 @@ export default async function TopicsPage({
                       {t.title}
                     </Link>
                     {t.description && (
-                      <p className="text-sm text-muted mt-1 line-clamp-2">{t.description}</p>
+                      <p className="text-sm text-muted mt-1 line-clamp-2">
+                        {htmlToText(t.description)}
+                      </p>
                     )}
                     <div className="mt-2 flex items-center gap-2 text-xs">
                       <span className="badge">{t.status}</span>

@@ -8,14 +8,17 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { htmlToText, parseQuotedHistory, stripQuotedReply } from "@/lib/text";
 import type { Choice } from "@/lib/types";
 
-export async function createTopic(formData: FormData) {
+// Creates the topic and returns its id. The client uses the id to attach
+// uploaded files (via /api/attachments/upload) and, if requested, to fire
+// announceTopic. Kept purely as create-and-return so those follow-up
+// steps can run separately without racing a redirect.
+export async function createTopic(formData: FormData): Promise<{ id: string }> {
   const me = await requireUser();
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim() || null;
   const closesRaw = String(formData.get("closes_at") ?? "").trim();
   const closes_at = closesRaw ? new Date(closesRaw).toISOString() : null;
-  const notify = formData.get("notify") === "on";
   if (!title) throw new Error("Title is required");
 
   const supabase = createAdminClient();
@@ -26,65 +29,72 @@ export async function createTopic(formData: FormData) {
     .single();
   if (error) throw new Error(error.message);
 
-  if (notify) {
-    const { data: members } = await supabase
-      .from("profiles")
-      .select("email");
-    const recipients = (members ?? [])
-      .map((m) => m.email)
-      .filter((e): e is string => !!e);
+  revalidatePath("/topics");
+  return { id: topic!.id };
+}
 
-    if (recipients.length) {
-      try {
-        const sent = await sendTopicAnnouncement({
-          to: recipients,
-          topicId: topic!.id,
-          title,
-          description,
-          closesAt: closes_at,
-        });
+export async function announceTopic(formData: FormData) {
+  const me = await requireUser();
+  const topic_id = String(formData.get("topic_id"));
+  if (!topic_id) throw new Error("Missing topic id");
 
-        // Persist the outbound announcement so inbound replies thread back
-        // to it via In-Reply-To, and so the conversation has a starter row.
-        if (sent.messageId) {
-          const { data: outbound } = await supabase
-            .from("emails")
-            .insert({
-              message_id: sent.messageId,
-              from_email: process.env.RESEND_FROM_EMAIL ?? "",
-              from_name: null,
-              to_email: recipients.join(", "),
-              subject: title,
-              body_text: description,
-              body_html: null,
-              matched_profile_id: me.id,
-              topic_id: topic!.id,
-              is_outbound: true,
-              processed: true,
-              raw: null,
-            })
-            .select("id")
-            .maybeSingle();
+  const supabase = createAdminClient();
+  const { data: topic } = await supabase
+    .from("topics")
+    .select("id,title,description,closes_at")
+    .eq("id", topic_id)
+    .maybeSingle();
+  if (!topic) throw new Error("Topic not found");
 
-          await supabase
-            .from("topic_messages")
-            .insert({
-              topic_id: topic!.id,
-              author_profile_id: me.id,
-              body_text: description ?? `(announcement: ${title})`,
-              body_html: null,
-              source: "email",
-              email_id: outbound?.id ?? null,
-            });
-        }
-      } catch (e) {
-        console.error("sendTopicAnnouncement failed", e);
-      }
-    }
+  const { data: members } = await supabase.from("profiles").select("email");
+  const recipients = (members ?? [])
+    .map((m) => m.email)
+    .filter((e): e is string => !!e);
+  if (!recipients.length) return;
+
+  const descriptionHtml = topic.description ?? null;
+  const descriptionText = descriptionHtml ? htmlToText(descriptionHtml) : null;
+
+  const sent = await sendTopicAnnouncement({
+    to: recipients,
+    topicId: topic.id,
+    title: topic.title,
+    descriptionHtml,
+    descriptionText,
+    closesAt: topic.closes_at,
+  });
+
+  if (sent.messageId) {
+    const { data: outbound } = await supabase
+      .from("emails")
+      .insert({
+        message_id: sent.messageId,
+        from_email: process.env.RESEND_FROM_EMAIL ?? "",
+        from_name: null,
+        to_email: recipients.join(", "),
+        subject: topic.title,
+        body_text: descriptionText,
+        body_html: descriptionHtml,
+        matched_profile_id: me.id,
+        topic_id: topic.id,
+        is_outbound: true,
+        processed: true,
+        raw: null,
+      })
+      .select("id")
+      .maybeSingle();
+
+    await supabase.from("topic_messages").insert({
+      topic_id: topic.id,
+      author_profile_id: me.id,
+      body_text: descriptionText ?? `(announcement: ${topic.title})`,
+      body_html: descriptionHtml,
+      source: "email",
+      email_id: outbound?.id ?? null,
+    });
   }
 
-  revalidatePath("/topics");
-  redirect(`/topics/${topic!.id}`);
+  revalidatePath(`/topics/${topic_id}`);
 }
 
 export async function postReply(formData: FormData) {
