@@ -2,14 +2,13 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { SubmitButton } from "@/components/submit-button";
 import { canViewInline } from "@/lib/attachments";
 import type { Attachment } from "@/lib/types";
 import {
   assignAttachmentToTopic,
   deleteAttachment,
-  uploadAttachment,
 } from "./actions";
+import { AttachmentUploadForm } from "./upload-form";
 
 export const dynamic = "force-dynamic";
 
@@ -54,42 +53,8 @@ export default async function AttachmentsPage() {
             No topics yet — create one first.
           </p>
         ) : (
-          <form
-            action={uploadAttachment}
-            encType="multipart/form-data"
-            className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto] gap-2 items-end"
-          >
-            <div>
-              <label className="label" htmlFor="topic_id">Topic</label>
-              <select
-                id="topic_id"
-                name="topic_id"
-                required
-                defaultValue=""
-                className="input"
-              >
-                <option value="" disabled>— Select a topic —</option>
-                {allTopics.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title} ({t.status})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label" htmlFor="file">File</label>
-              <input
-                id="file"
-                type="file"
-                name="file"
-                required
-                className="text-sm w-full file:btn file:mr-3"
-              />
-            </div>
-            <SubmitButton pendingLabel="Uploading…">Upload</SubmitButton>
-          </form>
+          <AttachmentUploadForm topics={allTopics} />
         )}
-        <p className="text-xs text-muted mt-2">25 MB max per file.</p>
       </section>
 
       <section className="space-y-3">

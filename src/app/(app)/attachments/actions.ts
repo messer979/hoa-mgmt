@@ -1,59 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireAdmin, requireUser } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
-
-// Max 25 MB (matches the bucket cap).
-const MAX_BYTES = 25 * 1024 * 1024;
-
-export async function uploadAttachment(formData: FormData) {
-  await requireUser();
-  const topic_id = String(formData.get("topic_id"));
-  const file = formData.get("file") as File | null;
-
-  if (!topic_id) throw new Error("Missing topic id");
-  if (!file || typeof file === "string" || file.size === 0) {
-    throw new Error("Pick a file to upload");
-  }
-  if (file.size > MAX_BYTES) {
-    throw new Error("File is over the 25 MB limit");
-  }
-
-  const supabase = createAdminClient();
-  const { data: topic } = await supabase
-    .from("topics")
-    .select("id")
-    .eq("id", topic_id)
-    .maybeSingle();
-  if (!topic) throw new Error("Topic not found");
-
-  const safeName = (file.name || "upload.bin").replace(/[^a-zA-Z0-9._-]+/g, "_");
-  const path = `manual/${topic_id}/${Date.now()}-${safeName}`;
-  const contentType = file.type || "application/octet-stream";
-
-  const { error: upErr } = await supabase.storage
-    .from("email-attachments")
-    .upload(path, file, { contentType, upsert: false });
-  if (upErr) throw new Error(upErr.message);
-
-  const { error: insErr } = await supabase.from("attachments").insert({
-    email_id: null,
-    topic_id,
-    storage_path: path,
-    filename: file.name,
-    content_type: contentType,
-    size_bytes: file.size,
-  });
-  if (insErr) {
-    // Roll back the storage upload if the row insert failed.
-    await supabase.storage.from("email-attachments").remove([path]);
-    throw new Error(insErr.message);
-  }
-
-  revalidatePath(`/topics/${topic_id}`);
-  revalidatePath("/attachments");
-}
 
 export async function assignAttachmentToTopic(formData: FormData) {
   await requireAdmin();

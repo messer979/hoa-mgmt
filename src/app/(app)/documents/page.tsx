@@ -1,10 +1,10 @@
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { SubmitButton } from "@/components/submit-button";
+import { FileDropzone } from "@/components/file-dropzone";
 import { canViewInline } from "@/lib/attachments";
 import type { Document, Profile } from "@/lib/types";
-import { deleteDocument, uploadDocument } from "./actions";
+import { deleteDocument } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -49,42 +49,12 @@ export default async function DocumentsPage() {
       </p>
 
       <section className="card">
-        <h2 className="font-medium mb-3">Upload a document</h2>
-        <form
-          action={uploadDocument}
-          encType="multipart/form-data"
-          className="space-y-3"
-        >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="label" htmlFor="title">Title (optional)</label>
-              <input id="title" name="title" className="input" placeholder="e.g. Bylaws (2024 revision)" />
-            </div>
-            <div>
-              <label className="label" htmlFor="file">File</label>
-              <input
-                id="file"
-                type="file"
-                name="file"
-                required
-                className="text-sm w-full file:btn file:mr-3"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="label" htmlFor="description">Description (optional)</label>
-            <textarea
-              id="description"
-              name="description"
-              className="input min-h-20"
-              placeholder="Short note about what this document covers…"
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-muted">25 MB max per file.</p>
-            <SubmitButton pendingLabel="Uploading…">Upload</SubmitButton>
-          </div>
-        </form>
+        <h2 className="font-medium mb-3">Upload documents</h2>
+        <FileDropzone
+          endpoint="/api/documents/upload"
+          perFileMeta
+          hint="Drag bylaws, covenants, minutes here"
+        />
       </section>
 
       <section className="space-y-3">

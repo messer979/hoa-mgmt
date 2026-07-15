@@ -2,8 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/server";
-import { uploadAttachment } from "../../attachments/actions";
-import { SubmitButton } from "@/components/submit-button";
+import { FileDropzone } from "@/components/file-dropzone";
 import {
   castVote,
   adminProxyVote,
@@ -368,25 +367,13 @@ export default async function TopicDetail({
           </p>
         )}
 
-        <form
-          action={uploadAttachment}
-          encType="multipart/form-data"
-          className="flex items-center gap-2 border-t border-border pt-3"
-        >
-          <input type="hidden" name="topic_id" value={topic.id} />
-          <input
-            type="file"
-            name="file"
-            required
-            className="text-sm flex-1 file:btn file:mr-3"
+        <div className="border-t border-border pt-3">
+          <FileDropzone
+            endpoint="/api/attachments/upload"
+            extraFields={{ topic_id: topic.id }}
+            hint="Drop files here to attach"
           />
-          <SubmitButton
-            className="btn-primary !py-1 !text-sm"
-            pendingLabel="Uploading…"
-          >
-            Upload
-          </SubmitButton>
-        </form>
+        </div>
         <p className="text-xs text-muted -mt-2">25 MB max per file.</p>
       </section>
 
