@@ -51,7 +51,7 @@ export function RichEditor({ value, onChange, placeholder, minHeight = "10rem" }
     if (!editor) return;
     const current = editor.getHTML();
     const incoming = value || "<p></p>";
-    if (current !== incoming) editor.commands.setContent(incoming, { emitUpdate: false });
+    if (current !== incoming) editor.commands.setContent(incoming, false);
   }, [value, editor]);
 
   return (
